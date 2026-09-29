@@ -118,6 +118,10 @@ type contextResponse struct {
 	Feedback    []store.Record `json:"feedback"`
 	GeneratedAt time.Time      `json:"generated_at"`
 	Truncated   bool           `json:"truncated"`
+	MaxBytes    int            `json:"max_bytes"`
+	Omitted     struct {
+		Knowledge int `json:"knowledge"`
+	} `json:"omitted"`
 }
 
 type historyResponse struct {
@@ -159,7 +163,7 @@ func TestSharedKnowledgeSurvivesRestartAndConcurrentUpdates(t *testing.T) {
 	first.close()
 
 	second := startIntegrationServer(t, path)
-	context := integrationRequest[contextResponse](t, second, http.MethodGet, "/v1/context?project_id="+url.QueryEscape(project.ID), tokenB, "", nil, http.StatusOK)
+	context := integrationRequest[contextResponse](t, second, http.MethodGet, "/v1/context?project_id="+url.QueryEscape(project.ID)+"&include_durable=true", tokenB, "", nil, http.StatusOK)
 	if context.Project.ID != project.ID || context.GeneratedAt.IsZero() || context.Truncated {
 		t.Errorf("unexpected project context metadata: %+v", context)
 	}
@@ -278,7 +282,7 @@ func TestProjectContextIsolationAndPortableExport(t *testing.T) {
 	createRecord(t, s, store.CreateInput{Kind: "feedback", Title: "Resolved local feedback", ProjectID: project.ID, Status: "resolved"})
 	createRecord(t, s, store.CreateInput{Kind: "feedback", Title: "Other project's feedback", ProjectID: otherProject.ID})
 
-	context := integrationRequest[contextResponse](t, s, http.MethodGet, "/v1/context?project_id="+url.QueryEscape(project.ID), tokenB, "", nil, http.StatusOK)
+	context := integrationRequest[contextResponse](t, s, http.MethodGet, "/v1/context?project_id="+url.QueryEscape(project.ID)+"&include_durable=true", tokenB, "", nil, http.StatusOK)
 	assertRecordIDs(t, context.Principles, globalPrinciple, localPrinciple)
 	assertRecordIDs(t, context.Knowledge, globalKnowledge, localKnowledge)
 	assertRecordIDs(t, context.Tasks, task)
@@ -377,7 +381,7 @@ func TestAuthenticationProtectsRecordsContextHistoryAndExport(t *testing.T) {
 	}
 }
 
-func TestProjectContextReportsTruncatedCategories(t *testing.T) {
+func TestProjectContextReportsByteBudgetOmissions(t *testing.T) {
 	s := startIntegrationServer(t, filepath.Join(t.TempDir(), "knowledge.sqlite"))
 	project := createRecord(t, s, store.CreateInput{Kind: "project", Title: "Large project"})
 	for index := range 101 {
@@ -387,9 +391,19 @@ func TestProjectContextReportsTruncatedCategories(t *testing.T) {
 		})
 	}
 	task := createRecord(t, s, store.CreateInput{Kind: "task", Title: "A task still fits in context", ProjectID: project.ID})
-	context := integrationRequest[contextResponse](t, s, http.MethodGet, "/v1/context?project_id="+url.QueryEscape(project.ID), tokenB, "", nil, http.StatusOK)
-	if len(context.Knowledge) != 100 || !context.Truncated {
-		t.Errorf("large context must report its category bound: knowledge = %d, truncated = %v", len(context.Knowledge), context.Truncated)
+	status, data, err := s.request(http.MethodGet, "/v1/context?project_id="+url.QueryEscape(project.ID)+"&include_durable=true&max_bytes=4096", tokenB, "", nil)
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("context: status = %d, error = %v, body = %s", status, err, data)
+	}
+	if len(data) > 4096 {
+		t.Fatalf("context exceeded its complete wire budget: %d bytes", len(data))
+	}
+	var context contextResponse
+	if err := json.Unmarshal(data, &context); err != nil {
+		t.Fatal(err)
+	}
+	if len(context.Knowledge) == 0 || len(context.Knowledge) >= 100 || !context.Truncated || context.MaxBytes != 4096 || context.Omitted.Knowledge != 101-len(context.Knowledge) {
+		t.Errorf("large context must report its byte budget and omissions: %+v", context)
 	}
 	assertRecordIDs(t, context.Tasks, task)
 }

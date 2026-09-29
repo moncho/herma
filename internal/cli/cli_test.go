@@ -290,7 +290,7 @@ func TestFreshAgentCLIWorkflowAndRetry(t *testing.T) {
 	if err := json.Unmarshal(runCommand("context", "--project", project.ID), &contextResult); err != nil {
 		t.Fatal(err)
 	}
-	if len(contextResult.Tasks) != 1 || len(contextResult.Knowledge) != 1 || contextResult.Tasks[0].ID != task.ID {
+	if len(contextResult.Tasks) != 1 || len(contextResult.Knowledge) != 0 || contextResult.Tasks[0].ID != task.ID {
 		t.Fatalf("fresh agent did not retrieve project context: %#v", contextResult)
 	}
 	args := []string{"update", task.ID, "--version", "1", "--status", "in_progress", "--request-id", "claim-task"}

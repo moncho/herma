@@ -113,11 +113,18 @@ func addIdentity(path, name string) error {
 	if !identityPattern.MatchString(name) {
 		return fmt.Errorf("invalid identity %q: use 1–64 letters, digits, dots, underscores or hyphens, starting with a letter or digit", name)
 	}
-	lock, err := os.OpenFile(path+".lock", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	lockPath, err := filepath.Abs(path + ".lock")
 	if err != nil {
-		return fmt.Errorf("lock credentials for update (another update may be running): %w", err)
+		return fmt.Errorf("resolve credentials lock path: %w", err)
 	}
-	defer func() { _ = lock.Close(); _ = os.Remove(path + ".lock") }()
+	lock, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("credentials update lock already exists at %q; remove that file only after ensuring no herma identity add process is running, then retry: %w", lockPath, err)
+		}
+		return fmt.Errorf("lock credentials for update: %w", err)
+	}
+	defer func() { _ = lock.Close(); _ = os.Remove(lockPath) }()
 	credentials, err := loadCredentials(path)
 	if err != nil {
 		return err

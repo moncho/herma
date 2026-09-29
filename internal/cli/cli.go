@@ -29,7 +29,10 @@ Global flags must come before the command. Environment defaults:
   HERMA_URL          http://127.0.0.1:8765
   HERMA_CREDENTIALS  .herma/credentials.json
   HERMA_IDENTITY     owner
-  HERMA_TOKEN        optional bearer token; overrides the credentials file for clients
+  HERMA_TOKEN        optional bearer token; replaces credential-file authentication
+
+For client commands, HERMA_TOKEN cannot be combined with --identity or a nonempty
+HERMA_IDENTITY. Unset HERMA_TOKEN to use a named identity from the credentials file.
 
 Commands:
   init                         Create owner credentials without overwriting
@@ -40,7 +43,10 @@ Commands:
   get ID
   update ID --version N [fields] [--archived true|false]
   history ID
-  context --project ID
+  project bind --project ID [--dir PATH] [--max-bytes N]
+  hook install --client claude|codex|both [--dir PATH]
+  hook session-start           Load bounded project context for a SessionStart hook
+  context [--project ID] [--max-bytes N] [--include-durable]
   schema
   export
 
@@ -49,10 +55,15 @@ Fields: --title, --body, --body-file, --project, --status, --priority,
 Writes accept --request-id KEY for safe retries; write errors include the key used.
 Updates send only supplied fields. Record bodies may contain up to 64 KiB of UTF-8.
 Use COMMAND --help for command options; for update use update ID --help.
-Successful results are JSON on stdout; errors and server logs go to stderr.
+Successful results are JSON on stdout; context uses compact JSON to honor its byte budget.
+herma coordinates sessions and handoffs; durable knowledge belongs in memory/wiki,
+and real tasks stay in Linear. Errors and server logs go to stderr.
 `
 
-type config struct{ endpoint, credentials, identity string }
+type config struct {
+	endpoint, credentials, identity string
+	identitySelected                bool
+}
 
 func envDefault(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
@@ -70,14 +81,20 @@ func flags(name string, out io.Writer) *flag.FlagSet {
 // Run executes one command. The caller prints returned errors and supplies a
 // cancellation context; serve shuts down gracefully when that context ends.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	err := run(ctx, args, stdout, stderr)
+	return RunWithInput(ctx, args, os.Stdin, stdout, stderr)
+}
+
+// RunWithInput also accepts hook event input, making the same command usable by
+// both agent clients without a shell script or another runtime dependency.
+func RunWithInput(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	err := run(ctx, args, stdin, stdout, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return nil
 	}
 	return err
 }
 
-func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	var cfg config
 	f := flags("herma", stderr)
 	f.StringVar(&cfg.endpoint, "url", envDefault("HERMA_URL", "http://127.0.0.1:8765"), "knowledge base server URL")
@@ -87,6 +104,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err := f.Parse(args); err != nil {
 		return err
 	}
+	cfg.identitySelected = os.Getenv("HERMA_IDENTITY") != ""
+	f.Visit(func(f *flag.Flag) {
+		if f.Name == "identity" {
+			cfg.identitySelected = true
+		}
+	})
 	args = f.Args()
 	if len(args) == 0 || args[0] == "help" {
 		_, err := io.WriteString(stdout, usage)
@@ -118,6 +141,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return update(ctx, cfg, rest, stdout, stderr)
 	case "list":
 		return list(ctx, cfg, rest, stdout, stderr)
+	case "project":
+		return bindProject(ctx, cfg, rest, stdout, stderr)
+	case "hook":
+		return hook(ctx, cfg, rest, stdin, stdout, stderr)
 	case "get", "history":
 		if len(rest) != 1 || strings.HasPrefix(rest[0], "-") {
 			return fmt.Errorf("usage: herma [global flags] %s ID", command)
@@ -128,15 +155,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		return cfg.request(ctx, stdout, http.MethodGet, path, nil, nil, "")
 	case "context":
-		fs := flags("context", stderr)
-		project := fs.String("project", "", "project record ID (required)")
-		if err := parse(fs, rest); err != nil {
-			return err
-		}
-		if *project == "" {
-			return errors.New("context requires --project ID")
-		}
-		return cfg.request(ctx, stdout, http.MethodGet, "/v1/context", url.Values{"project_id": {*project}}, nil, "")
+		return projectContextCommand(ctx, cfg, rest, stdout, stderr)
 	case "schema", "export":
 		if err := noOptions(command, rest, stderr); err != nil {
 			return err
@@ -169,19 +188,7 @@ func output(w io.Writer, value any) error {
 }
 
 func (cfg config) request(ctx context.Context, stdout io.Writer, method, path string, query url.Values, input any, requestID string) error {
-	token := os.Getenv("HERMA_TOKEN")
-	if token == "" {
-		identities, err := loadCredentials(cfg.credentials)
-		if err != nil {
-			return err
-		}
-		var ok bool
-		token, ok = identities[cfg.identity]
-		if !ok {
-			return fmt.Errorf("identity %q is not in the credentials file", cfg.identity)
-		}
-	}
-	c, err := client.New(cfg.endpoint, token)
+	c, err := cfg.client()
 	if err != nil {
 		return err
 	}
@@ -202,6 +209,25 @@ func (cfg config) request(ctx context.Context, stdout io.Writer, method, path st
 	formatted.WriteByte('\n')
 	_, err = stdout.Write(formatted.Bytes())
 	return writeError(err, requestID)
+}
+
+func (cfg config) client() (*client.Client, error) {
+	token := os.Getenv("HERMA_TOKEN")
+	if token != "" && cfg.identitySelected {
+		return nil, errors.New("HERMA_TOKEN cannot be combined with --identity or HERMA_IDENTITY; unset HERMA_TOKEN to use a named identity, or remove the identity settings to use the token")
+	}
+	if token == "" {
+		identities, err := loadCredentials(cfg.credentials)
+		if err != nil {
+			return nil, err
+		}
+		var ok bool
+		token, ok = identities[cfg.identity]
+		if !ok {
+			return nil, fmt.Errorf("identity %q is not in the credentials file", cfg.identity)
+		}
+	}
+	return client.New(cfg.endpoint, token)
 }
 
 func writeError(err error, requestID string) error {

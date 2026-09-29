@@ -12,7 +12,6 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,7 +22,8 @@ import (
 )
 
 const maxBody = 128 << 10
-const contextLimit = 100
+const maxExportBytes = 16 << 20
+const exportBuildTimeout = 20 * time.Second
 
 type identity struct {
 	actor  string
@@ -74,13 +74,6 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, errors.New("malformed query parameters"))
 		return
 	}
-	if r.Method == http.MethodPost || r.Method == http.MethodPatch {
-		h.mu.Lock()
-		defer h.mu.Unlock()
-	} else {
-		h.mu.RLock()
-		defer h.mu.RUnlock()
-	}
 	switch r.URL.Path {
 	case "/v1/schema":
 		if method(w, r, http.MethodGet) {
@@ -95,7 +88,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if !decodeBody(w, r, &input) {
 				return
 			}
+			// Client-controlled body reads and response writes must never hold
+			// the snapshot lock. Only the committed mutation needs exclusion.
+			h.mu.Lock()
 			record, replay, err := h.store.Create(r.Context(), actor, r.Header.Get("Idempotency-Key"), input)
+			h.mu.Unlock()
 			if err != nil {
 				storeError(w, err)
 				return
@@ -171,7 +168,9 @@ func (h *handler) record(w http.ResponseWriter, r *http.Request, id, actor strin
 		if !decodeBody(w, r, &input) {
 			return
 		}
+		h.mu.Lock()
 		record, replay, err := h.store.Update(r.Context(), id, actor, r.Header.Get("Idempotency-Key"), input)
+		h.mu.Unlock()
 		if err != nil {
 			storeError(w, err)
 			return
@@ -221,123 +220,75 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-type projectContext struct {
-	Project     store.Record   `json:"project"`
-	Principles  []store.Record `json:"principles"`
-	Knowledge   []store.Record `json:"knowledge"`
-	Tasks       []store.Record `json:"tasks"`
-	Notes       []store.Record `json:"notes"`
-	Feedback    []store.Record `json:"feedback"`
-	GeneratedAt time.Time      `json:"generated_at"`
-	Truncated   bool           `json:"truncated"`
-}
-
-func (h *handler) projectContext(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	if err := validateQuery(q, "project_id"); err != nil {
-		badRequest(w, err)
-		return
-	}
-	if q.Get("project_id") == "" {
-		badRequest(w, errors.New("project_id is required"))
-		return
-	}
-	project, err := h.store.Get(r.Context(), q.Get("project_id"))
-	if err != nil {
-		storeError(w, err)
-		return
-	}
-	if project.Kind != "project" || project.Archived {
-		badRequest(w, errors.New("context requires an unarchived project"))
-		return
-	}
-	result := projectContext{Project: project, GeneratedAt: time.Now().UTC()}
-	for _, category := range []struct {
-		kind     string
-		statuses []string
-		global   bool
-		target   *[]store.Record
-	}{
-		{"principle", []string{"accepted"}, true, &result.Principles},
-		{"knowledge", []string{"accepted"}, true, &result.Knowledge},
-		{"task", []string{"open", "in_progress", "blocked"}, false, &result.Tasks},
-		{"note", []string{"published"}, false, &result.Notes},
-		{"feedback", []string{"open", "triaged"}, false, &result.Feedback},
-	} {
-		items, total, err := h.contextRecords(r.Context(), project.ID, category.kind, category.statuses, category.global)
-		if err != nil {
-			storeError(w, err)
-			return
-		}
-		*category.target = items
-		result.Truncated = result.Truncated || total > contextLimit
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-
-func (h *handler) contextRecords(ctx context.Context, project, kind string, statuses []string, includeGlobal bool) ([]store.Record, int, error) {
-	items := []store.Record{}
-	total := 0
-	scopes := []bool{false}
-	if includeGlobal {
-		scopes = append(scopes, true)
-	}
-	for _, global := range scopes {
-		for _, status := range statuses {
-			o := store.ListOptions{Kind: kind, Status: status, Limit: contextLimit, Global: global}
-			if !global {
-				o.ProjectID = project
-			}
-			result, err := h.store.List(ctx, o)
-			if err != nil {
-				return nil, 0, err
-			}
-			total += result.Total
-			items = append(items, result.Items...)
-		}
-	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].Priority != items[j].Priority {
-			return items[i].Priority > items[j].Priority
-		}
-		if !items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
-			return items[i].UpdatedAt.After(items[j].UpdatedAt)
-		}
-		return items[i].ID < items[j].ID
-	})
-	if len(items) > contextLimit {
-		items = items[:contextLimit]
-	}
-	return items, total, nil
-}
-
 func (h *handler) export(w http.ResponseWriter, r *http.Request) {
 	if err := validateQuery(r.URL.Query()); err != nil {
 		badRequest(w, err)
 		return
 	}
-	records := []store.Record{}
-	history := map[string][]store.Revision{}
-	for offset := 0; ; offset += 200 {
-		page, err := h.store.List(r.Context(), store.ListOptions{Archived: true, Limit: 200, Offset: offset})
-		if err != nil {
+	// Leave time to send a structured failure before the server's 30-second
+	// write deadline. Streaming and efficient large-history snapshots are future work.
+	ctx, cancel := context.WithTimeout(r.Context(), exportBuildTimeout)
+	defer cancel()
+	snapshot, err := h.exportSnapshot(ctx)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			writeError(w, http.StatusServiceUnavailable, "export_timeout", "export took too long to prepare; use a stopped-service database backup for large histories")
+		} else {
 			storeError(w, err)
-			return
 		}
-		records = append(records, page.Items...)
-		if len(records) >= page.Total {
+		return
+	}
+	// Serialize before committing success. Content-Length also makes an
+	// interrupted network transfer detectable by HTTP clients.
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	if len(data)+1 > maxExportBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "export_too_large", "export exceeds 16 MiB; use a stopped-service database backup for large histories")
+		return
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		writeError(w, http.StatusServiceUnavailable, "export_timeout", "export took too long to prepare; use a stopped-service database backup for large histories")
+		return
+	}
+	data = append(data, '\n')
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+type exportSnapshot struct {
+	FormatVersion int                         `json:"format_version"`
+	ExportedAt    time.Time                   `json:"exported_at"`
+	Records       []store.Record              `json:"records"`
+	History       map[string][]store.Revision `json:"history"`
+}
+
+func (h *handler) exportSnapshot(ctx context.Context) (exportSnapshot, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	result := exportSnapshot{FormatVersion: 1, Records: []store.Record{}, History: map[string][]store.Revision{}}
+	for offset := 0; ; offset += 200 {
+		page, err := h.store.List(ctx, store.ListOptions{Archived: true, Limit: 200, Offset: offset})
+		if err != nil {
+			return exportSnapshot{}, err
+		}
+		result.Records = append(result.Records, page.Items...)
+		if len(result.Records) >= page.Total {
 			break
 		}
 	}
-	for _, record := range records {
-		items, err := h.store.History(r.Context(), record.ID)
+	for _, record := range result.Records {
+		items, err := h.store.History(ctx, record.ID)
 		if err != nil {
-			storeError(w, err)
-			return
+			return exportSnapshot{}, err
 		}
-		history[record.ID] = items
+		result.History[record.ID] = items
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"format_version": 1, "exported_at": time.Now().UTC(), "records": records, "history": history})
+	result.ExportedAt = time.Now().UTC()
+	return result, nil
 }
 
 func decodeBody(w http.ResponseWriter, r *http.Request, dst any) bool {

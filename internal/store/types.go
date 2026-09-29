@@ -66,16 +66,17 @@ type UpdateInput struct {
 }
 
 type ListOptions struct {
-	Kind      string
-	ProjectID string
-	Global    bool // Only records with no project.
-	Status    string
-	Owner     string
-	Tag       string
-	Query     string
-	Archived  bool // Include archived records when true.
-	Limit     int
-	Offset    int
+	Kind        string
+	ProjectID   string
+	Global      bool // Only records with no project.
+	Status      string
+	Owner       string
+	Tag         string
+	Query       string
+	Archived    bool // Include archived records when true.
+	RecentFirst bool // Rank by update time instead of priority, for handover notes.
+	Limit       int
+	Offset      int
 }
 
 type ListResult struct {

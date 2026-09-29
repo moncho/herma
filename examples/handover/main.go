@@ -69,11 +69,23 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	decision, err := create(a, "decision", store.CreateInput{Kind: "knowledge", Title: "Keep decisions traceable", Body: "Record the evidence behind a decision so the next session can verify it.", Status: "accepted", ProjectID: project.ID, Tags: []string{"demo"}, Sources: []string{"example:handover"}})
+	// This is an illustrative reference only. The example makes no requests to
+	// Linear and leaves canonical issue status and durable knowledge elsewhere.
+	const issueReference = "https://linear.app/example/issue/DEMO-1"
+	initialNote, err := create(a, "initial-note", store.CreateInput{
+		Kind: "note", Title: "Session A handoff", ProjectID: project.ID,
+		Body: "Changed: Prepared this demo handoff.\nChecked: Session A can write coordination context.\nNext: Session B should retrieve the handoff and finish the coordination check.\nReferences: The Linear URL is a placeholder; durable decisions belong in memory files or the wiki.",
+		Tags: []string{"demo", "handoff"}, Sources: []string{issueReference},
+	})
 	if err != nil {
 		return err
 	}
-	task, err := create(a, "task", store.CreateInput{Kind: "task", Title: "Record a successful session handover", Body: "A fresh session should retrieve the decision and this task, then leave a note.", ProjectID: project.ID, Priority: 4, Links: []string{decision.ID}, Tags: []string{"demo"}})
+	task, err := create(a, "task", store.CreateInput{
+		Kind: "task", Title: "Session A is preparing the demo handoff", ProjectID: project.ID,
+		Body:   "Working intent: preparing this project's session handoff. Session B should inspect the handoff, finish this coordination check, and leave an outcome note. The real issue and its status stay in Linear.",
+		Status: "in_progress", Owner: "session-a", Priority: 4,
+		Links: []string{initialNote.ID}, Tags: []string{"demo"}, Sources: []string{issueReference},
+	})
 	if err != nil {
 		return err
 	}
@@ -82,17 +94,27 @@ func run() error {
 		return err
 	}
 	var read struct {
-		Knowledge []store.Record `json:"knowledge"`
-		Tasks     []store.Record `json:"tasks"`
+		Notes []store.Record `json:"notes"`
+		Tasks []store.Record `json:"tasks"`
 	}
 	if err = json.Unmarshal(packet, &read); err != nil {
 		return err
 	}
-	if len(read.Knowledge) != 1 || len(read.Tasks) != 1 || read.Tasks[0].ID != task.ID {
-		return fmt.Errorf("fresh-session context did not contain the expected decision and task")
+	if len(read.Notes) != 1 || read.Notes[0].ID != initialNote.ID || len(read.Tasks) != 1 || read.Tasks[0].ID != task.ID {
+		return fmt.Errorf("fresh-session context did not contain the expected handoff and coordination record")
+	}
+	// Context is a bounded summary. Fetch the complete record and its current
+	// version before editing, even when the summary already includes a version.
+	fresh, err := b.Do(ctx, http.MethodGet, "/v1/records/"+task.ID, nil, nil, "")
+	if err != nil {
+		return err
+	}
+	var current store.Record
+	if err = json.Unmarshal(fresh, &current); err != nil {
+		return err
 	}
 	done, owner := "done", "session-b"
-	updated, err := b.Do(ctx, http.MethodPatch, "/v1/records/"+task.ID, nil, store.UpdateInput{Version: read.Tasks[0].Version, Status: &done, Owner: &owner}, runID+"-complete")
+	updated, err := b.Do(ctx, http.MethodPatch, "/v1/records/"+task.ID, nil, store.UpdateInput{Version: current.Version, Status: &done, Owner: &owner}, runID+"-complete")
 	if err != nil {
 		return err
 	}
@@ -100,7 +122,11 @@ func run() error {
 	if err = json.Unmarshal(updated, &complete); err != nil {
 		return err
 	}
-	note, err := create(b, "note", store.CreateInput{Kind: "note", Title: "Handover verified", Body: "Session B retrieved session A's decision and task, then recorded completion using the version it read.", ProjectID: project.ID, Links: []string{decision.ID, task.ID}, Tags: []string{"demo"}})
+	note, err := create(b, "final-note", store.CreateInput{
+		Kind: "note", Title: "Session B handoff outcome", ProjectID: project.ID,
+		Body:  "Changed: Session B retrieved session A's handoff and finished the coordination check.\nChecked: Read the complete coordination record before updating its version.\nNext: Use this example's pattern for session handoffs.\nReferences: No Linear issue was updated; durable knowledge stays in memory files or the wiki.",
+		Links: []string{initialNote.ID, task.ID}, Tags: []string{"demo", "handoff"}, Sources: []string{issueReference},
+	})
 	if err != nil {
 		return err
 	}
@@ -120,8 +146,8 @@ func run() error {
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(map[string]any{
-		"result": "handover verified", "project_id": project.ID, "decision_id": decision.ID, "task_id": task.ID, "note_id": note.ID,
-		"task_status": complete.Status, "task_version": complete.Version, "created_by": complete.CreatedBy, "completed_by": complete.UpdatedBy,
+		"result": "handover verified", "project_id": project.ID, "initial_note_id": initialNote.ID, "coordination_id": task.ID, "final_note_id": note.ID,
+		"coordination_status": complete.Status, "coordination_version": complete.Version, "created_by": complete.CreatedBy, "completed_by": complete.UpdatedBy,
 		"next_command": "herma context --project " + project.ID,
 	})
 }
