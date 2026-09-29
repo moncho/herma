@@ -4,7 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -217,5 +220,115 @@ func TestFailedMigrationLeavesDatabaseUnchanged(t *testing.T) {
 	defer s.Close()
 	if got := searchTotal(t, s, "kept"); got != 1 {
 		t.Fatalf("search after retried migration = %d, want 1", got)
+	}
+}
+
+func TestReceiptDoesNotDuplicateRecordBody(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	body := strings.Repeat("large handoff body ", 3000)
+	input := CreateInput{Kind: "note", Title: "Large handoff", Body: body}
+	r, _, err := s.Create(ctx, "agent-a", "large-request", input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Measure every column so the check does not depend on the receipt layout.
+	rows, err := s.db.Query("SELECT * FROM idempotency")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	columns, err := rows.Columns()
+	if err != nil {
+		t.Fatal(err)
+	}
+	size := 0
+	for rows.Next() {
+		values := make([]any, len(columns))
+		pointers := make([]any, len(columns))
+		for i := range values {
+			pointers[i] = &values[i]
+		}
+		if err := rows.Scan(pointers...); err != nil {
+			t.Fatal(err)
+		}
+		for _, value := range values {
+			size += len(fmt.Sprint(value))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if size > 1024 {
+		t.Fatalf("receipt stores %d bytes for a %d-byte body; it should reference the revision", size, len(body))
+	}
+	got, replay, err := s.Create(ctx, "agent-a", "large-request", input)
+	if err != nil || !replay || !reflect.DeepEqual(got, r) {
+		t.Fatalf("replay after compact receipt: %t %v", replay, err)
+	}
+}
+
+// versionTwoDatabase holds one record created with a receipt in the format
+// written by schema version 2, which stored a full record copy.
+func versionTwoDatabase(t *testing.T, r Record, key string, input CreateInput) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "v2.sqlite3")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, migration := range migrations[:2] {
+		if _, err := db.Exec(migration); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := json.Marshal(Revision{Version: r.Version, Actor: r.CreatedBy, Action: "created", At: r.UpdatedAt, Record: r})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := requestFingerprint("create", "", input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{"PRAGMA user_version = 2", nil},
+		{"INSERT INTO record_search(rowid, title, body) VALUES (1, ?, ?)", []any{r.Title, r.Body}},
+		{"INSERT INTO records(id, kind, project_id, status, priority, owner, archived, updated_ns, data, search_rowid) VALUES (?, ?, NULL, ?, ?, ?, 0, ?, ?, 1)",
+			[]any{r.ID, r.Kind, r.Status, r.Priority, r.Owner, r.UpdatedAt.UnixNano(), string(data)}},
+		{"INSERT INTO revisions(record_id, version, data) VALUES (?, ?, ?)", []any{r.ID, r.Version, string(revision)}},
+		{"INSERT INTO idempotency(actor, key, fingerprint, data) VALUES (?, ?, ?, ?)", []any{r.CreatedBy, key, fingerprint, string(data)}},
+	} {
+		if _, err := db.Exec(statement.query, statement.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return path
+}
+
+func TestOpenUpgradesVersionTwoReceipts(t *testing.T) {
+	ctx := context.Background()
+	input := CreateInput{Kind: "task", Title: "Receipt before upgrade", Body: "kept"}
+	r := legacyRecord("rec_"+strings.Repeat("d", 32), input.Title, input.Body)
+	s, err := Open(versionTwoDatabase(t, r, "old-request", input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	got, replay, err := s.Create(ctx, "agent-a", "old-request", input)
+	if err != nil || !replay || !reflect.DeepEqual(got, r) {
+		t.Fatalf("replay of upgraded receipt: %+v %t %v", got, replay, err)
+	}
+	other := input
+	other.Title = "Different input"
+	if _, _, err := s.Create(ctx, "agent-a", "old-request", other); !errors.Is(err, ErrIdempotency) {
+		t.Fatalf("misuse of upgraded receipt: %v", err)
 	}
 }

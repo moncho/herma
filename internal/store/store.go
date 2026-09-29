@@ -69,6 +69,21 @@ DROP TABLE record_search;
 CREATE VIRTUAL TABLE record_search USING fts5(title, body);
 INSERT INTO record_search(rowid, title, body)
  SELECT search_rowid, json_extract(data, '$.title'), json_extract(data, '$.body') FROM records;`,
+	// 3: receipts reference the revision written in the same transaction
+	// instead of storing another complete record copy.
+	`CREATE TABLE idempotency_compact (
+ actor TEXT NOT NULL,
+ key TEXT NOT NULL,
+ fingerprint TEXT NOT NULL,
+ record_id TEXT NOT NULL,
+ version INTEGER NOT NULL,
+ PRIMARY KEY(actor, key),
+ FOREIGN KEY(record_id, version) REFERENCES revisions(record_id, version)
+);
+INSERT INTO idempotency_compact(actor, key, fingerprint, record_id, version)
+ SELECT actor, key, fingerprint, json_extract(data, '$.id'), json_extract(data, '$.version') FROM idempotency;
+DROP TABLE idempotency;
+ALTER TABLE idempotency_compact RENAME TO idempotency;`,
 }
 
 // Open opens a local SQLite database. The parent directory must already exist.
@@ -430,7 +445,7 @@ owner=excluded.owner, archived=excluded.archived, updated_ns=excluded.updated_ns
 		return err
 	}
 	if key != "" {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO idempotency(actor, key, fingerprint, data) VALUES (?, ?, ?, ?)", actor, key, fingerprint, string(data)); err != nil {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO idempotency(actor, key, fingerprint, record_id, version) VALUES (?, ?, ?, ?, ?)", actor, key, fingerprint, r.ID, r.Version); err != nil {
 			return err
 		}
 	}
@@ -454,8 +469,11 @@ func replayRecord(ctx context.Context, tx *sql.Tx, actor, key, fingerprint strin
 	if key == "" {
 		return Record{}, false, nil
 	}
+	// The revision holds the exact record snapshot this key originally returned.
 	var previous, data string
-	err := tx.QueryRowContext(ctx, "SELECT fingerprint, data FROM idempotency WHERE actor = ? AND key = ?", actor, key).Scan(&previous, &data)
+	err := tx.QueryRowContext(ctx, `SELECT i.fingerprint, r.data FROM idempotency i
+JOIN revisions r ON r.record_id = i.record_id AND r.version = i.version
+WHERE i.actor = ? AND i.key = ?`, actor, key).Scan(&previous, &data)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, false, nil
 	}
@@ -465,11 +483,11 @@ func replayRecord(ctx context.Context, tx *sql.Tx, actor, key, fingerprint strin
 	if previous != fingerprint {
 		return Record{}, false, ErrIdempotency
 	}
-	var record Record
-	if err := json.Unmarshal([]byte(data), &record); err != nil {
+	var revision Revision
+	if err := json.Unmarshal([]byte(data), &revision); err != nil {
 		return Record{}, false, fmt.Errorf("decode replay: %w", err)
 	}
-	return record, true, nil
+	return revision.Record, true, nil
 }
 
 var defaultStatus = map[string]string{

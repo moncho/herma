@@ -62,6 +62,7 @@ locks, or guarantees about what an agent does outside the service.
 - No automatic ingestion, orchestration, Linear synchronization, job scheduling
   or web interface. Agents record coordination changes explicitly.
 - No hard deletion or retention policy; history and retry receipts accumulate.
+  Receipts reference the revision they returned rather than copying the record.
 - JSON export has no import counterpart yet; use a stopped-service directory
   backup to preserve the full database and credentials.
 - List offset pagination can shift between separate calls as records change.
