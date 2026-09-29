@@ -1,0 +1,436 @@
+// Package cli implements herma's JSON-oriented command line interface.
+package cli
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/moncho/herma/internal/api"
+	"github.com/moncho/herma/internal/client"
+	"github.com/moncho/herma/internal/store"
+)
+
+const usage = `Usage: herma [--url URL] [--credentials PATH] [--identity NAME] COMMAND [options]
+
+Global flags must come before the command. Environment defaults:
+  HERMA_URL          http://127.0.0.1:8765
+  HERMA_CREDENTIALS  .herma/credentials.json
+  HERMA_IDENTITY     owner
+  HERMA_TOKEN        optional bearer token; overrides the credentials file for clients
+
+Commands:
+  init                         Create owner credentials without overwriting
+  identity add NAME            Add credentials for an agent; restart server to reload
+  serve [--db PATH] [--listen HOST:PORT]
+  create --kind KIND --title TITLE [--body TEXT | --body-file PATH] [fields]
+  list [--project ID] [--kind KIND] [--q TEXT] [filters]
+  get ID
+  update ID --version N [fields] [--archived true|false]
+  history ID
+  context --project ID
+  schema
+  export
+
+Fields: --title, --body, --body-file, --project, --status, --priority,
+        --owner, --tags, --links, --sources. Lists are comma-separated.
+Writes accept --request-id KEY for safe retries; write errors include the key used.
+Updates send only supplied fields. Record bodies may contain up to 64 KiB of UTF-8.
+Use COMMAND --help for command options; for update use update ID --help.
+Successful results are JSON on stdout; errors and server logs go to stderr.
+`
+
+type config struct{ endpoint, credentials, identity string }
+
+func envDefault(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func flags(name string, out io.Writer) *flag.FlagSet {
+	f := flag.NewFlagSet(name, flag.ContinueOnError)
+	f.SetOutput(out)
+	return f
+}
+
+// Run executes one command. The caller prints returned errors and supplies a
+// cancellation context; serve shuts down gracefully when that context ends.
+func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	err := run(ctx, args, stdout, stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
+	}
+	return err
+}
+
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	var cfg config
+	f := flags("herma", stderr)
+	f.StringVar(&cfg.endpoint, "url", envDefault("HERMA_URL", "http://127.0.0.1:8765"), "knowledge base server URL")
+	f.StringVar(&cfg.credentials, "credentials", envDefault("HERMA_CREDENTIALS", ".herma/credentials.json"), "credentials JSON path")
+	f.StringVar(&cfg.identity, "identity", envDefault("HERMA_IDENTITY", "owner"), "authenticated identity")
+	f.Usage = func() { fmt.Fprint(stderr, usage) }
+	if err := f.Parse(args); err != nil {
+		return err
+	}
+	args = f.Args()
+	if len(args) == 0 || args[0] == "help" {
+		_, err := io.WriteString(stdout, usage)
+		return err
+	}
+	command, rest := args[0], args[1:]
+	switch command {
+	case "init":
+		if err := noOptions(command, rest, stderr); err != nil {
+			return err
+		}
+		if err := initCredentials(cfg.credentials); err != nil {
+			return err
+		}
+		return output(stdout, map[string]string{"status": "created", "identity": "owner", "credentials": cfg.credentials})
+	case "identity":
+		if len(rest) != 2 || rest[0] != "add" {
+			return errors.New("usage: herma [global flags] identity add NAME")
+		}
+		if err := addIdentity(cfg.credentials, rest[1]); err != nil {
+			return err
+		}
+		return output(stdout, map[string]string{"status": "created", "identity": rest[1], "credentials": cfg.credentials, "message": "Restart the server to load the new identity."})
+	case "serve":
+		return serve(ctx, cfg, rest, stderr)
+	case "create":
+		return create(ctx, cfg, rest, stdout, stderr)
+	case "update":
+		return update(ctx, cfg, rest, stdout, stderr)
+	case "list":
+		return list(ctx, cfg, rest, stdout, stderr)
+	case "get", "history":
+		if len(rest) != 1 || strings.HasPrefix(rest[0], "-") {
+			return fmt.Errorf("usage: herma [global flags] %s ID", command)
+		}
+		path := "/v1/records/" + url.PathEscape(rest[0])
+		if command == "history" {
+			path += "/history"
+		}
+		return cfg.request(ctx, stdout, http.MethodGet, path, nil, nil, "")
+	case "context":
+		fs := flags("context", stderr)
+		project := fs.String("project", "", "project record ID (required)")
+		if err := parse(fs, rest); err != nil {
+			return err
+		}
+		if *project == "" {
+			return errors.New("context requires --project ID")
+		}
+		return cfg.request(ctx, stdout, http.MethodGet, "/v1/context", url.Values{"project_id": {*project}}, nil, "")
+	case "schema", "export":
+		if err := noOptions(command, rest, stderr); err != nil {
+			return err
+		}
+		return cfg.request(ctx, stdout, http.MethodGet, "/v1/"+command, nil, nil, "")
+	default:
+		return fmt.Errorf("unknown command %q; run herma help", command)
+	}
+}
+
+func parse(fs *flag.FlagSet, args []string) error {
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q; command flags must follow the command and global flags must precede it", fs.Arg(0))
+	}
+	return nil
+}
+
+func noOptions(name string, args []string, stderr io.Writer) error {
+	return parse(flags(name, stderr), args)
+}
+
+func output(w io.Writer, value any) error {
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	encoder.SetEscapeHTML(false)
+	return encoder.Encode(value)
+}
+
+func (cfg config) request(ctx context.Context, stdout io.Writer, method, path string, query url.Values, input any, requestID string) error {
+	token := os.Getenv("HERMA_TOKEN")
+	if token == "" {
+		identities, err := loadCredentials(cfg.credentials)
+		if err != nil {
+			return err
+		}
+		var ok bool
+		token, ok = identities[cfg.identity]
+		if !ok {
+			return fmt.Errorf("identity %q is not in the credentials file", cfg.identity)
+		}
+	}
+	c, err := client.New(cfg.endpoint, token)
+	if err != nil {
+		return err
+	}
+	if (method == http.MethodPost || method == http.MethodPatch) && requestID == "" {
+		requestID, err = randomID()
+		if err != nil {
+			return err
+		}
+	}
+	data, err := c.Do(ctx, method, path, query, input, requestID)
+	if err != nil {
+		return writeError(err, requestID)
+	}
+	var formatted bytes.Buffer
+	if err := json.Indent(&formatted, data, "", "  "); err != nil {
+		return err
+	}
+	formatted.WriteByte('\n')
+	_, err = stdout.Write(formatted.Bytes())
+	return writeError(err, requestID)
+}
+
+func writeError(err error, requestID string) error {
+	if err != nil && requestID != "" {
+		return fmt.Errorf("%w; request ID %q (reuse with --request-id and the same arguments when retrying this write)", err, requestID)
+	}
+	return err
+}
+
+type fields struct {
+	title, body, bodyFile, project, status, owner, tags, links, sources, requestID string
+	priority                                                                       int
+}
+
+func (v *fields) register(fs *flag.FlagSet) {
+	fs.StringVar(&v.title, "title", "", "record title")
+	fs.StringVar(&v.body, "body", "", "record text, including multiline text")
+	fs.StringVar(&v.bodyFile, "body-file", "", "read UTF-8 body from this file")
+	fs.StringVar(&v.project, "project", "", "project record ID; empty clears it on update")
+	fs.StringVar(&v.status, "status", "", "record status; see herma schema")
+	fs.IntVar(&v.priority, "priority", 0, "record priority; see herma schema")
+	fs.StringVar(&v.owner, "owner", "", "task owner; empty clears it on update")
+	fs.StringVar(&v.tags, "tags", "", "comma-separated tags; empty clears them on update")
+	fs.StringVar(&v.links, "links", "", "comma-separated related record IDs")
+	fs.StringVar(&v.sources, "sources", "", "comma-separated source references or URLs")
+	fs.StringVar(&v.requestID, "request-id", "", "idempotency key; defaults to a new random key")
+}
+
+func supplied(fs *flag.FlagSet) map[string]bool {
+	result := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) { result[f.Name] = true })
+	return result
+}
+
+func (v *fields) readBody(set map[string]bool) error {
+	if set["body-file"] {
+		if set["body"] {
+			return errors.New("use either --body or --body-file, not both")
+		}
+		f, err := os.Open(v.bodyFile)
+		if err != nil {
+			return fmt.Errorf("open body file: %w", err)
+		}
+		defer f.Close()
+		data, err := io.ReadAll(io.LimitReader(f, (64<<10)+1))
+		if err != nil {
+			return fmt.Errorf("read body file: %w", err)
+		}
+		v.body = string(data)
+	}
+	if len(v.body) > 64<<10 || !utf8.ValidString(v.body) {
+		return errors.New("body must be valid UTF-8 and at most 64 KiB")
+	}
+	return nil
+}
+
+func csv(value string) []string {
+	result := make([]string, 0)
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func create(ctx context.Context, cfg config, args []string, stdout, stderr io.Writer) error {
+	fs := flags("create", stderr)
+	v := fields{}
+	v.register(fs)
+	kind := fs.String("kind", "", "record kind (required); see herma schema")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	if *kind == "" || v.title == "" {
+		return errors.New("create requires --kind and --title")
+	}
+	if err := v.readBody(supplied(fs)); err != nil {
+		return err
+	}
+	input := store.CreateInput{Kind: *kind, Title: v.title, Body: v.body, ProjectID: v.project, Status: v.status, Priority: v.priority, Owner: v.owner, Tags: csv(v.tags), Links: csv(v.links), Sources: csv(v.sources)}
+	return cfg.request(ctx, stdout, http.MethodPost, "/v1/records", nil, input, v.requestID)
+}
+
+func update(ctx context.Context, cfg config, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return errors.New("usage: herma [global flags] update ID --version N [fields]")
+	}
+	id := args[0]
+	fs := flags("update", stderr)
+	v := fields{}
+	v.register(fs)
+	version := fs.Int64("version", 0, "current record version (required)")
+	archived := fs.String("archived", "", "true to archive, false to restore")
+	if err := parse(fs, args[1:]); err != nil {
+		return err
+	}
+	set := supplied(fs)
+	if !set["version"] || *version < 1 {
+		return errors.New("update requires --version with the record's current positive version")
+	}
+	if err := v.readBody(set); err != nil {
+		return err
+	}
+	input := store.UpdateInput{Version: *version}
+	if set["title"] {
+		input.Title = &v.title
+	}
+	if set["body"] || set["body-file"] {
+		input.Body = &v.body
+	}
+	if set["project"] {
+		input.ProjectID = &v.project
+	}
+	if set["status"] {
+		input.Status = &v.status
+	}
+	if set["priority"] {
+		input.Priority = &v.priority
+	}
+	if set["owner"] {
+		input.Owner = &v.owner
+	}
+	if set["tags"] {
+		value := csv(v.tags)
+		input.Tags = &value
+	}
+	if set["links"] {
+		value := csv(v.links)
+		input.Links = &value
+	}
+	if set["sources"] {
+		value := csv(v.sources)
+		input.Sources = &value
+	}
+	if set["archived"] {
+		if *archived != "true" && *archived != "false" {
+			return errors.New("--archived must be true or false")
+		}
+		value := *archived == "true"
+		input.Archived = &value
+	}
+	mutable := false
+	for name := range set {
+		if name != "version" && name != "request-id" {
+			mutable = true
+		}
+	}
+	if !mutable {
+		return errors.New("update requires at least one field to change")
+	}
+	return cfg.request(ctx, stdout, http.MethodPatch, "/v1/records/"+url.PathEscape(id), nil, input, v.requestID)
+}
+
+func list(ctx context.Context, cfg config, args []string, stdout, stderr io.Writer) error {
+	fs := flags("list", stderr)
+	stringsByQuery := make(map[string]*string)
+	for _, key := range []string{"kind", "status", "owner", "tag", "q"} {
+		stringsByQuery[key] = fs.String(key, "", "filter by "+key)
+	}
+	stringsByQuery["project_id"] = fs.String("project", "", "project record ID")
+	global := fs.Bool("global", false, "only records without a project")
+	archived := fs.Bool("include-archived", false, "include archived records")
+	limit := fs.Int("limit", 50, "maximum records to return (1–200)")
+	offset := fs.Int("offset", 0, "number of records to skip")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	if *global && *stringsByQuery["project_id"] != "" {
+		return errors.New("--global and --project cannot be combined")
+	}
+	if *limit < 1 || *limit > 200 || *offset < 0 {
+		return errors.New("--limit must be 1–200 and --offset must be nonnegative")
+	}
+	query := url.Values{"limit": {strconv.Itoa(*limit)}, "offset": {strconv.Itoa(*offset)}}
+	for key, value := range stringsByQuery {
+		if *value != "" {
+			query.Set(key, *value)
+		}
+	}
+	if *global {
+		query.Set("global", "true")
+	}
+	if *archived {
+		query.Set("include_archived", "true")
+	}
+	return cfg.request(ctx, stdout, http.MethodGet, "/v1/records", query, nil, "")
+}
+
+func serve(ctx context.Context, cfg config, args []string, stderr io.Writer) error {
+	fs := flags("serve", stderr)
+	dbPath := fs.String("db", ".herma/knowledge.sqlite3", "SQLite database path")
+	listen := fs.String("listen", "127.0.0.1:8765", "HTTP listen address")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	identities, err := loadCredentials(cfg.credentials)
+	if err != nil {
+		return err
+	}
+	if err := prepareDatabase(*dbPath); err != nil {
+		return err
+	}
+	db, err := store.Open(*dbPath)
+	if err != nil {
+		return fmt.Errorf("open knowledge database: %w", err)
+	}
+	defer db.Close()
+	server := &http.Server{Addr: *listen, Handler: api.NewHandler(db, identities), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
+	listener, err := net.Listen("tcp", *listen)
+	if err != nil {
+		return fmt.Errorf("listen for knowledge base requests: %w", err)
+	}
+	finished := make(chan error, 1)
+	go func() { finished <- server.Serve(listener) }()
+	fmt.Fprintf(stderr, "Knowledge base listening on %s; database %s\n", listener.Addr(), *dbPath)
+	select {
+	case err := <-finished:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return fmt.Errorf("serve knowledge base: %w", err)
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			_ = server.Close()
+			return fmt.Errorf("shut down server: %w", err)
+		}
+		return nil
+	}
+}
