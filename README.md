@@ -1,8 +1,13 @@
 # herma
 
-A shared memory service for people and agent sessions, written in Go. It stores
-decisions, working principles, projects, tasks, handover notes, and feedback in
-SQLite. Sessions use the same authenticated HTTP API through a small JSON CLI.
+A coordination and handoff service for agent sessions working on the same
+project, written in Go. It answers: who is working where, what is blocked, what
+changed, and what should the next session know? Sessions share an authenticated
+HTTP API and a small CLI, backed by SQLite.
+
+Durable knowledge belongs in memory files and the wiki. Real tasks and their
+status stay in Linear. herma stores short-lived working intent and handoffs, with
+links to those sources, rather than duplicating them.
 
 This is a new, independent project inspired by the
 [external knowledge base described in The Ground Truth](https://thegroundtruth.media/i/217789967/external-knowledge-base).
@@ -58,25 +63,78 @@ on disk when the server stops; do not reinitialize them.
 go run -buildvcs=false ./examples/handover
 ```
 
-The example creates a tagged demo project, decision and task as `session-a`,
-retrieves them as `session-b`, completes the task at its expected version, and
+The example creates a demo project, handoff and coordination record as `session-a`,
+retrieves them as `session-b`, completes the coordination record at its expected version, and
 leaves a handover note. It prints the record IDs and authenticated revision
 authors. Each run creates a new demo project. Restart persistence and competing
 edits are also exercised by the integration tests.
+
+## Automatically load context in each session
+
+Create one herma project for the repository, then bind it from the repository root.
+Use an absolute path to your built herma executable and credentials if they live
+elsewhere. Replace `PROJECT_ID` with the ID returned by the first command:
+
+```sh
+herma create --kind project --title 'My repository' --status active
+herma project bind --project PROJECT_ID --max-bytes 12288
+herma --credentials /absolute/path/credentials.json --identity session-a \
+  hook install --client both
+```
+
+If the service's credentials live elsewhere, set `HERMA_CREDENTIALS` to their
+absolute path before the create/bind commands too. `herma` above means the built
+executable on your PATH; otherwise use its full path.
+Install hooks using a built executable, not `go run`: the hook must be able to
+find the same executable in future sessions.
+
+Use `--client claude` or `--client codex` to install for one client. Installation
+merges a synchronous SessionStart hook into `.claude/settings.local.json` and/or
+`.codex/hooks.json`, preserving existing settings and other hooks. Repeating
+installation updates herma's own hook without duplicating it. Commands capture the
+executable, service URL and credential-file path, never a token. Keep these
+machine-specific hook files local; the generated `.herma-project.json` contains only
+the project ID and budget and can be committed for other sessions/worktrees.
+
+In Codex, review and trust the installed hook through `/hooks`; the project must
+also be trusted. This is Codex's normal hook setup requirement. Start a new
+session after installation. The hook runs on every SessionStart, including
+startup, resume, clear, compaction and Claude session forks. See the official [Codex hook documentation](https://learn.chatgpt.com/docs/hooks)
+and [Claude Code hook documentation](https://code.claude.com/docs/en/hooks).
+
+The hook discovers the nearest `.herma-project.json` using the session's actual
+working directory. Nested folders work; lookup stops at a Git repository or
+worktree boundary. Track the binding in each worktree where it is needed, and
+install local hooks there. An invalid nearby binding produces a warning instead
+of silently falling back. To change a binding, edit its project ID/budget
+explicitly; `project bind` will not overwrite a different existing configuration.
+
+The startup hook is read-only, has a five-second request deadline, and continues
+with a short warning if the service, credentials or binding are unavailable.
+Unbound projects are a quiet no-op. Token-based installs inherit `HERMA_TOKEN` from
+the agent environment and warn if it is missing, without falling back to another
+identity. Named-identity installs require `HERMA_TOKEN` to be unset.
+No MCP server is needed for this automatic loading path.
+
+After binding, `herma context` works without repeating the project ID. Context
+refreshes at session boundaries; run it again during a long session before
+coordinating an edit with another agent.
 
 ## Records
 
 | Kind | Purpose | Statuses, with the default first |
 | --- | --- | --- |
-| `knowledge` | Facts, research, decisions, preferences | `proposed`, `accepted`, `superseded` |
-| `principle` | Working conventions and project rules | `proposed`, `accepted`, `superseded` |
-| `project` | A shared unit of work | `planned`, `active`, `paused`, `completed` |
-| `task` | An actionable item | `open`, `in_progress`, `blocked`, `done` |
-| `note` | An immutable handover or observation | `published` |
-| `feedback` | Friction or problems to triage | `open`, `triaged`, `resolved` |
+| `project` | Repository or shared session coordination scope | `planned`, `active`, `paused`, `completed` |
+| `task` | Session working intent, ownership and blockers; link the real Linear issue | `open`, `in_progress`, `blocked`, `done` |
+| `note` | An immutable handoff: changes, checks, next action and references | `published` |
+| `feedback` | Unresolved coordination friction or blocker | `open`, `triaged`, `resolved` |
+| `knowledge` | Legacy durable content; excluded from default context | `proposed`, `accepted`, `superseded` |
+| `principle` | Legacy conventions; excluded from default context | `proposed`, `accepted`, `superseded` |
 
 Records have stable IDs, text bodies, optional project membership, priority
 from 0 to 5 (5 is highest), tags, links to other records, and source references.
+Self-links are rejected. Links to archived records remain valid because those
+records and their histories are still readable.
 The server records the authenticated creator/editor, UTC timestamps and version.
 Every change stores a complete revision in the same transaction.
 
@@ -87,28 +145,27 @@ Every change stores a complete revision in the same transaction.
 
 ```sh
 # Save the returned project ID for subsequent commands.
-./bin/herma create --kind project --title 'Release planning' --status active
+./bin/herma create --kind project --title 'Repository sessions' --status active
 
 # Replace PROJECT_ID with that ID.
-./bin/herma --identity session-a create --kind knowledge \
-  --project PROJECT_ID --title 'Keep a source for every decision' \
-  --body 'Include the evidence or discussion that led to the decision.' \
-  --status accepted --tags decisions --sources 'meeting:2026-09-29'
-
 ./bin/herma --identity session-a create --kind task \
-  --project PROJECT_ID --title 'Write the release checklist' --priority 4 \
-  --request-id release-checklist-create-1
+  --project PROJECT_ID --title 'Session A is editing the API' --priority 4 \
+  --body 'Working in internal/api; please coordinate overlapping edits here.' \
+  --status in_progress --owner session-a --sources LINEAR_ISSUE_URL \
+  --request-id api-session-a-start-1
 
 # A fresh session receives a bounded context packet.
 ./bin/herma --identity session-b context --project PROJECT_ID
 
-# Replace TASK_ID and use the version returned by get/context.
-./bin/herma --identity session-b update TASK_ID --version 1 \
-  --status in_progress --owner session-b --request-id release-checklist-claim-1
+# Leave a handoff; use returned coordination IDs in --links.
+./bin/herma --identity session-a create --kind note \
+  --project PROJECT_ID --title 'API handoff' --tags handoff \
+  --body 'Changed request validation. Race tests pass. Next: review the retry path.' \
+  --links COORDINATION_ID --sources LINEAR_ISSUE_URL,COMMIT_URL
 
-./bin/herma history TASK_ID
+./bin/herma history COORDINATION_ID
 ./bin/herma list --project PROJECT_ID --kind task --status open
-./bin/herma list --q 'release checklist' --tag decisions
+./bin/herma list --project PROJECT_ID --kind note --tag handoff
 ```
 
 Global flags (`--url`, `--credentials`, `--identity`) go **before** the command.
@@ -145,19 +202,36 @@ history and export. There is no hard-delete endpoint.
 
 ## Session context
 
-`herma context --project ID` returns:
+`herma context` (or `herma context --project ID`) returns:
 
 - The unarchived project.
-- Accepted global and project-specific principles and knowledge.
-- Project tasks in `open`, `in_progress` or `blocked` state.
-- Project notes and unresolved feedback.
+- Session coordination records (`task`) in `open`, `in_progress` or `blocked` state.
+- Recent handoff notes and unresolved coordination feedback.
 
-Each category includes at most 100 records, ranked by priority and recency. A
-`truncated` flag tells the caller to use paginated `list` queries for more detail.
-Other projects, archived records and proposed knowledge are excluded.
+The entire compact JSON response, including metadata and newline, is capped at
+**12 KiB by default**. Use `--max-bytes N` (2–64 KiB), or set `max_bytes` in the
+project binding. The API accepts the same `max_bytes` query parameter. This is an
+exact byte budget, not an estimated token count; CLI formatting does not expand it.
+Each individual record preview uses at most 2 KiB or a quarter of the packet
+budget, whichever is smaller, so one long body cannot crowd out every other item.
+
+Coordination records and blockers take priority over handoff notes; recent notes
+come before optional durable content. Context contains summaries: `truncated`,
+per-category `omitted` counts, `body_truncated` and `truncated_fields` report what
+was clipped or left out. Use `get ID` to retrieve a complete, fresh record before
+editing, or filtered/paginated `list` for omitted items. A 100-record candidate
+limit per category also bounds query work; it does not define the text budget.
+
+Other projects, archived records and durable knowledge/principles are excluded
+by default. Existing durable data is preserved and remains available through
+`get`, `list`, export, or explicit `context --include-durable`. The automatic
+startup hook always uses coordination-only context.
 
 Search uses SQLite FTS5 over title/body. Query words are treated as plain text
-and all must match. Filters are combined with AND. Lists default to 50 records
+and all must match. Matching is by tokenizer terms, not arbitrary substrings:
+Chinese or Japanese text without separators can be indexed as a whole run, so
+searching for an embedded word may miss it. Language-aware segmentation is not
+implemented yet. Filters are combined with AND. Lists default to 50 records
 and support up to 200 per page with `--limit` and `--offset`.
 
 See [the agent workflow](docs/agent-workflow.md) for a session handover pattern.
@@ -172,29 +246,49 @@ multi-tenant service.
 For a remote client, set `HERMA_URL` and `HERMA_TOKEN` to that session's endpoint and
 individual token. Do not distribute the server's complete credentials file to
 remote agents. `HERMA_CREDENTIALS` and `HERMA_IDENTITY` configure local credential-file
-selection; `HERMA_TOKEN` overrides it. Tokens are never included in API responses.
+selection. Use `HERMA_TOKEN` alone for token authentication. Combining it with an
+explicit `--identity` or a nonempty `HERMA_IDENTITY` is rejected before a request is
+sent, so the token cannot silently change the selected writer. For local named
+identities, use `env -u HERMA_TOKEN ./bin/herma --identity NAME ...`. Tokens are never
+included in API responses.
 Adding or rotating identities requires restarting the server.
 
+If an interrupted `identity add` leaves a lock behind, the error names the exact
+lock file. Confirm no other `herma identity add` is running before removing that
+file and retrying; do not remove an active writer's lock.
+
 The local default is HTTP on loopback. Put HTTPS and appropriate network access
-controls in front of any remote deployment. This first version does not install
-hooks, run agents, schedule jobs, or provision a public server.
+controls in front of any remote deployment. The service does not run agents,
+schedule jobs, or provision a public server.
 
 The service owns one SQLite database on local disk. Writes and history are
-transactional, and context/export hold off API writes while taking a consistent
-view. Run one service process per database. Do not share the SQLite file over a
+transactional, and context/export hold off API writes while reading a consistent
+snapshot. Request-body reads, response encoding and network writes happen
+outside that lock, so a stalled client does not freeze other sessions. Run one
+service process per database. Do not share the SQLite file over a
 network filesystem or open competing service processes against it.
 
 ## Export and backup
 
 ```sh
-./bin/herma export > knowledge-export.json
+./bin/herma export > .herma/knowledge-export.json.tmp &&
+  mv .herma/knowledge-export.json.tmp .herma/knowledge-export.json
 ```
 
 Export includes all records and their revision history, including archived data.
 It excludes credentials and idempotency receipts. Treat the export as private.
 JSON export is for inspection and portability; there is no JSON import command
-yet. The CLI currently caps responses at 16 MiB and the server builds exports in
-memory, so large histories need a database backup instead.
+yet. The command above replaces the saved export only after a successful
+download. The CLI buffers and validates the complete response before writing
+stdout, so a truncated transfer fails without printing a partial export.
+
+The server builds exports in memory and reads each record's history separately.
+It rejects JSON exports larger than 16 MiB with `export_too_large` (HTTP 413) and
+limits snapshot preparation to 20 seconds, reporting `export_timeout` (HTTP 503)
+if that budget expires. Successful responses include their exact Content-Length,
+so clients can detect an interrupted download. A slow network can still hit the
+server's 30-second write timeout; streaming is deferred, and large histories
+should use a database backup instead.
 
 For a restorable backup, stop the service cleanly, then copy the entire private
 `.herma` directory to a protected location. Restore that directory with the service

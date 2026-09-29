@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS records (
 );
 CREATE INDEX IF NOT EXISTS records_project ON records(project_id);
 CREATE INDEX IF NOT EXISTS records_order ON records(priority DESC, updated_ns DESC, id);
+CREATE INDEX IF NOT EXISTS records_project_recent ON records(project_id, kind, archived, updated_ns DESC, id);
 CREATE VIRTUAL TABLE IF NOT EXISTS record_search USING fts5(id UNINDEXED, title, body);
 CREATE TABLE IF NOT EXISTS revisions (
  record_id TEXT NOT NULL REFERENCES records(id),
@@ -261,7 +262,11 @@ func (s *Store) List(ctx context.Context, options ListOptions) (ListResult, erro
 		return ListResult{}, err
 	}
 	pageArgs := append(append([]any{}, args...), options.Limit, options.Offset)
-	rows, err := tx.QueryContext(ctx, "SELECT r.data"+where+" ORDER BY r.priority DESC, r.updated_ns DESC, r.id ASC LIMIT ? OFFSET ?", pageArgs...)
+	order := "r.priority DESC, r.updated_ns DESC, r.id ASC"
+	if options.RecentFirst {
+		order = "r.updated_ns DESC, r.id ASC"
+	}
+	rows, err := tx.QueryContext(ctx, "SELECT r.data"+where+" ORDER BY "+order+" LIMIT ? OFFSET ?", pageArgs...)
 	if err != nil {
 		return ListResult{}, err
 	}
@@ -523,6 +528,9 @@ func validateReferences(ctx context.Context, tx *sql.Tx, r Record, oldProject st
 		}
 	}
 	for _, link := range r.Links {
+		if link == r.ID {
+			return invalid("links must not reference the record itself")
+		}
 		if _, err := getRecord(ctx, tx, link); err != nil {
 			if errors.Is(err, ErrNotFound) {
 				return invalid("links must reference existing records")
