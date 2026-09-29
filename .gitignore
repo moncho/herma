@@ -1,0 +1,7 @@
+/.herma/
+/bin/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+coverage.out
+/knowledge-export.json
