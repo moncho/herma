@@ -40,6 +40,12 @@ unlocking. Slow uploads or downloads therefore cannot hold that lock. This
 guarantee assumes one service process owns the file. Source references are intentionally distinct from the
 authenticated identity and cannot override authorship.
 
+The schema is versioned with SQLite's `user_version`. Opening a database
+applies any pending migrations in order, each in its own transaction with its
+version bump, so a failed step leaves the previous version intact. A database
+written by a newer herma is refused rather than modified. Search rows are keyed by
+an FTS rowid stored on each record, so writes update one index row directly.
+
 Versioned edits prevent lost updates. They are not task leases, distributed
 locks, or guarantees about what an agent does outside the service.
 

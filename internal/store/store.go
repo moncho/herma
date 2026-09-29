@@ -23,8 +23,15 @@ import (
 // A single connection serializes writes and also makes :memory: useful in tests.
 type Store struct{ db *sql.DB }
 
-const schema = `
-CREATE TABLE IF NOT EXISTS records (
+// schemaVersion is the PRAGMA user_version written by the newest migration.
+var schemaVersion = len(migrations)
+
+// migrations[i] upgrades a database from user_version i to i+1. Each runs in
+// one transaction with its version bump. Append new steps; never edit old ones.
+var migrations = []string{
+	// 1: the original unversioned schema. IF NOT EXISTS adopts databases
+	// created before versioning without changing them.
+	`CREATE TABLE IF NOT EXISTS records (
  id TEXT PRIMARY KEY,
  kind TEXT NOT NULL,
  project_id TEXT REFERENCES records(id),
@@ -51,7 +58,18 @@ CREATE TABLE IF NOT EXISTS idempotency (
  fingerprint TEXT NOT NULL,
  data TEXT NOT NULL,
  PRIMARY KEY(actor, key)
-);`
+);`,
+	// 2: key search rows by FTS rowid. Deleting by the UNINDEXED id column
+	// scanned the whole index on every write. The rowid is stored in records
+	// because implicit table rowids may change during VACUUM.
+	`ALTER TABLE records ADD COLUMN search_rowid INTEGER;
+UPDATE records SET search_rowid = rowid;
+CREATE UNIQUE INDEX records_search_rowid ON records(search_rowid);
+DROP TABLE record_search;
+CREATE VIRTUAL TABLE record_search USING fts5(title, body);
+INSERT INTO record_search(rowid, title, body)
+ SELECT search_rowid, json_extract(data, '$.title'), json_extract(data, '$.body') FROM records;`,
+}
 
 // Open opens a local SQLite database. The parent directory must already exist.
 func Open(path string) (*Store, error) {
@@ -74,11 +92,40 @@ func Open(path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	if _, err := db.Exec(schema); err != nil {
+	if err := migrate(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("initialize database: %w", err)
 	}
 	return &Store{db: db}, nil
+}
+
+func migrate(db *sql.DB) error {
+	var version int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		return err
+	}
+	if version > len(migrations) {
+		return fmt.Errorf("database schema version %d is newer than this herma supports (%d); use a newer herma build", version, len(migrations))
+	}
+	for ; version < len(migrations); version++ {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(migrations[version]); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("migrate schema to version %d: %w", version+1, err)
+		}
+		// PRAGMA values cannot be bound; version is a trusted integer.
+		if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version+1)); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("migrate schema to version %d: %w", version+1, err)
+		}
+	}
+	return nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -248,7 +295,7 @@ func (s *Store) List(ctx context.Context, options ListOptions) (ListResult, erro
 		if query == "" {
 			conditions = append(conditions, "0=1")
 		} else {
-			add("r.id IN (SELECT id FROM record_search WHERE record_search MATCH ?)", query)
+			add("r.search_rowid IN (SELECT rowid FROM record_search WHERE record_search MATCH ?)", query)
 		}
 	}
 	where := " FROM records r WHERE " + strings.Join(conditions, " AND ")
@@ -348,18 +395,31 @@ func saveRecord(ctx context.Context, tx *sql.Tx, r Record, action, actor, key, f
 	if r.ProjectID != "" {
 		project = r.ProjectID
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO records(id, kind, project_id, status, priority, owner, archived, updated_ns, data)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	// Each record owns one search row, addressed by its stored FTS rowid.
+	var searchRowID int64
+	err = tx.QueryRowContext(ctx, "SELECT search_rowid FROM records WHERE id = ?", r.ID).Scan(&searchRowID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		result, err := tx.ExecContext(ctx, "INSERT INTO record_search(title, body) VALUES (?, ?)", r.Title, r.Body)
+		if err != nil {
+			return err
+		}
+		if searchRowID, err = result.LastInsertId(); err != nil {
+			return err
+		}
+	case err != nil:
+		return err
+	default:
+		if _, err := tx.ExecContext(ctx, "UPDATE record_search SET title = ?, body = ? WHERE rowid = ?", r.Title, r.Body, searchRowID); err != nil {
+			return err
+		}
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO records(id, kind, project_id, status, priority, owner, archived, updated_ns, data, search_rowid)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id, status=excluded.status, priority=excluded.priority,
 owner=excluded.owner, archived=excluded.archived, updated_ns=excluded.updated_ns, data=excluded.data`,
-		r.ID, r.Kind, project, r.Status, r.Priority, r.Owner, r.Archived, r.UpdatedAt.UnixNano(), string(data))
+		r.ID, r.Kind, project, r.Status, r.Priority, r.Owner, r.Archived, r.UpdatedAt.UnixNano(), string(data), searchRowID)
 	if err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM record_search WHERE id = ?", r.ID); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO record_search(id, title, body) VALUES (?, ?, ?)", r.ID, r.Title, r.Body); err != nil {
 		return err
 	}
 	revision, err := json.Marshal(Revision{Version: r.Version, Actor: actor, Action: action, At: r.UpdatedAt, Record: r})
