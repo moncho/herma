@@ -75,8 +75,9 @@ when the file changes; an invalid file keeps the previous identities.
   or web interface. Agents record coordination changes explicitly.
 - No hard deletion or retention policy; history and retry receipts accumulate.
   Receipts reference the revision they returned rather than copying the record.
-- JSON export has no import counterpart yet; use a stopped-service directory
-  backup to preserve the full database and credentials.
+- Durability comes from `VACUUM INTO` snapshots that `herma serve` writes into a
+  synced folder on an interval; `herma restore` installs the newest valid one.
+  Snapshots exclude credentials. JSON export has no import counterpart.
 - List offset pagination can shift between separate calls as records change.
   Context and export are consistent within one request.
 - Context is capped by complete serialized JSON bytes, including metadata and

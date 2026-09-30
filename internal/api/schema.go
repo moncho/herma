@@ -34,6 +34,7 @@ func schemaDocument() map[string]any {
 			{"method": "GET", "path": "/health", "purpose": "unauthenticated liveness"},
 			{"method": "GET", "path": "/v1/schema", "purpose": "this API description"},
 			{"method": "GET", "path": "/v1/whoami", "purpose": "the authenticated identity, its role, and the listener (tcp or socket) that received the request"},
+			{"method": "GET", "path": "/v1/backup", "purpose": "automatic snapshot status: enabled, directory, interval, keep count, last success, last error and stale; {\"enabled\":false} when herma serve runs without --backup-dir"},
 			{"method": "POST", "path": "/v1/records", "purpose": "create record; 201 or 200 for replay"},
 			{"method": "GET", "path": "/v1/records", "purpose": "filter and search records"},
 			{"method": "GET", "path": "/v1/records/{id}", "purpose": "read a record, including archived records"},

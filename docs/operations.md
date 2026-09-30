@@ -39,7 +39,7 @@ outside that lock, so a stalled client does not freeze other sessions. Run one
 service process per database. Do not share the SQLite file over a network
 filesystem or open competing service processes against it.
 
-## Export and backup
+## Export, backups and restore
 
 ```sh
 ./bin/herma export > .herma/knowledge-export.json.tmp &&
@@ -61,7 +61,51 @@ so clients can detect an interrupted download. A slow network can still hit the
 server's 30-second write timeout; streaming is deferred, and large histories
 should use a database backup instead.
 
-For a restorable backup, stop the service cleanly, then copy the entire private
-`.herma` directory to a protected location. Restore that directory with the service
-stopped and preserve its private permissions. Do not copy only the database file
-while the service is running: uncheckpointed changes may still be in its WAL.
+### Backups and restore
+
+`herma serve --backup-dir DIR` writes a snapshot of the database into `DIR` at
+startup, every six hours (`--backup-every`, minimum `5m`) and on a graceful
+shutdown, skipping it when nothing changed. It keeps the newest 14 snapshots
+(`--backup-keep`, minimum `1`) and never touches other files in the folder.
+`--backup-every` and `--backup-keep` require `--backup-dir`, and `herma serve`
+refuses to start if `DIR` is missing, not a directory or not writable. Point
+`DIR` at a folder your sync tool already copies off the machine: herma uploads
+nothing itself.
+
+Each snapshot, `herma-YYYYMMDDTHHMMSSZ.sqlite3` (UTC), is a complete, checked copy
+of records and history written while the service keeps running. Snapshots
+contain no credentials and are not encrypted, so choose a folder you would trust
+with the project's notes.
+
+`herma backup status` shows whether backups are enabled, the folder, interval and
+keep count, the last success, the last error and whether backups are `stale` (no
+success for twice the interval). An idle store whose snapshot is current is not
+stale. Sessions also get a one-line warning at startup when backups are enabled
+and stale.
+
+Give each database its own backup folder. On a new machine, run `herma restore`
+before starting `herma serve --backup-dir` (or `make service-start BACKUP_DIR=…`):
+herma refuses to serve an empty database against a folder holding snapshots with
+more revisions than the database, and tells you to restore or pick another
+folder. If the macOS service runs on the machine you are restoring on, stop it
+with `make service-stop` first.
+
+To restore after losing the machine:
+
+```sh
+./bin/herma init
+./bin/herma restore /path/to/synced/herma-backups
+./bin/herma serve --backup-dir /path/to/synced/herma-backups
+# or, on macOS: make service-start BACKUP_DIR=/path/to/synced/herma-backups
+./bin/herma identity add session-a
+```
+
+`herma restore SNAPSHOT|DIR [--db PATH] [--replace]` picks the newest snapshot that
+passes its checks when given a folder. It refuses to run while a server answers
+on the socket next to the credentials file (pass the same `--socket` if the
+server used a custom one). It refuses to overwrite an existing database, or a
+leftover `-wal` or `-shm` file, unless you pass `--replace`, which moves the
+current files aside as `*.before-restore-YYYYMMDDTHHMMSSZ` instead of deleting
+them. If a restore fails after moving files aside, the error lists them. Restore
+never touches credentials: issue new agent tokens and give them to remote
+sessions.

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -52,9 +53,10 @@ func freeAddress(t *testing.T) string {
 	return listener.Addr().String()
 }
 
-// startServe runs herma serve with fresh credentials and returns the credentials
-// path and TCP URL. HERMA_CREDENTIALS and HERMA_URL point at them for the test.
-func startServe(t *testing.T, extra ...identitySpec) (string, string) {
+// startServeWith runs herma serve with fresh credentials and extra serve flags.
+// It returns the credentials path, the TCP URL and an idempotent stop function
+// that also runs at cleanup. HERMA_CREDENTIALS and HERMA_URL point at the server.
+func startServeWith(t *testing.T, serveArgs []string, extra ...identitySpec) (string, string, func()) {
 	t.Helper()
 	cleanEnv(t)
 	dir := shortDir(t)
@@ -71,15 +73,18 @@ func startServe(t *testing.T, extra ...identitySpec) (string, string) {
 	endpoint := "http://" + address
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() {
-		done <- Run(ctx, []string{"--credentials", credentials, "serve", "--db", filepath.Join(dir, "herma.sqlite3"), "--listen", address}, io.Discard, io.Discard)
-	}()
-	t.Cleanup(func() {
-		cancel()
-		if err := <-done; err != nil {
-			t.Errorf("serve: %v", err)
-		}
-	})
+	args := append([]string{"--credentials", credentials, "serve", "--db", filepath.Join(dir, "herma.sqlite3"), "--listen", address}, serveArgs...)
+	go func() { done <- Run(ctx, args, io.Discard, io.Discard) }()
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			cancel()
+			if err := <-done; err != nil {
+				t.Errorf("serve: %v", err)
+			}
+		})
+	}
+	t.Cleanup(stop)
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		response, err := http.Get(endpoint + "/health")
@@ -96,6 +101,12 @@ func startServe(t *testing.T, extra ...identitySpec) (string, string) {
 	}
 	t.Setenv("HERMA_CREDENTIALS", credentials)
 	t.Setenv("HERMA_URL", endpoint)
+	return credentials, endpoint, stop
+}
+
+func startServe(t *testing.T, extra ...identitySpec) (string, string) {
+	t.Helper()
+	credentials, endpoint, _ := startServeWith(t, nil, extra...)
 	return credentials, endpoint
 }
 

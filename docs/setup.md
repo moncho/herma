@@ -36,6 +36,21 @@ make service-status
 ./bin/herma list
 ```
 
+To take automatic backups, pass a folder that your sync tool copies off the
+machine, such as iCloud Drive or Dropbox. Use an absolute path, because launchd
+starts the service from another directory:
+
+```sh
+make service-start BACKUP_DIR="$HOME/Library/Mobile Documents/com~apple~CloudDocs/herma-backups"
+```
+
+Give each database its own folder. On a new machine, run `herma restore` before
+starting the service with `BACKUP_DIR`: herma refuses to serve an empty database
+against a folder with newer snapshots.
+
+In the foreground, use `./bin/herma serve --backup-dir DIR`. See
+[backups and restore](operations.md#backups-and-restore).
+
 macOS manages the process and restarts it if it fails. Logs are in
 `.herma/server.log`. To stop it, run `make service-stop`; to deploy a rebuilt
 binary, stop it and run `make service-start` again. Credential changes are
