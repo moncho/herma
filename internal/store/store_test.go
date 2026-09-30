@@ -26,7 +26,7 @@ func testStore(t *testing.T) *Store {
 
 func createRecord(t *testing.T, s *Store, input CreateInput) Record {
 	t.Helper()
-	r, replay, err := s.Create(context.Background(), "agent-a", "", input)
+	r, replay, err := s.Create(context.Background(), reviewer("agent-a"), "", input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestPersistenceHistoryAndAttribution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, _, err := s.Create(ctx, "agent-a", "persist-create", CreateInput{Kind: "knowledge", Title: "  Search decision  ", Body: "Use SQLite", Tags: []string{" Storage ", "storage", "MVP"}, Sources: []string{"https://example.com/spec"}})
+	r, _, err := s.Create(ctx, reviewer("agent-a"), "persist-create", CreateInput{Kind: "knowledge", Title: "  Search decision  ", Body: "Use SQLite", Tags: []string{" Storage ", "storage", "MVP"}, Sources: []string{"https://example.com/spec"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestPersistenceHistoryAndAttribution(t *testing.T) {
 	if !reflect.DeepEqual(r.Tags, []string{"storage", "mvp"}) || r.Links == nil {
 		t.Fatalf("normalization: %+v", r)
 	}
-	updated, _, err := s.Update(ctx, r.ID, "agent-b", "persist-update", UpdateInput{Version: 1, Body: pointer("Use SQLite with FTS5"), Status: pointer("accepted")})
+	updated, _, err := s.Update(ctx, r.ID, reviewer("agent-b"), "persist-update", UpdateInput{Version: 1, Body: pointer("Use SQLite with FTS5"), Status: pointer("accepted")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestPersistenceHistoryAndAttribution(t *testing.T) {
 	if len(history) != 2 || history[0].Version != 1 || history[1].Version != 2 || history[0].Actor != "agent-a" || history[1].Actor != "agent-b" || history[0].Action != "created" || history[1].Action != "updated" || !reflect.DeepEqual(history[0].Record, r) || !reflect.DeepEqual(history[1].Record, updated) {
 		t.Fatalf("incorrect history: %+v", history)
 	}
-	replayed, replay, err := s.Update(ctx, r.ID, "agent-b", "persist-update", UpdateInput{Version: 1, Body: pointer("Use SQLite with FTS5"), Status: pointer("accepted")})
+	replayed, replay, err := s.Update(ctx, r.ID, reviewer("agent-b"), "persist-update", UpdateInput{Version: 1, Body: pointer("Use SQLite with FTS5"), Status: pointer("accepted")})
 	if err != nil || !replay || !reflect.DeepEqual(replayed, updated) {
 		t.Fatalf("persisted replay: %+v, %t, %v", replayed, replay, err)
 	}
@@ -112,7 +112,7 @@ func TestConcurrentUpdatesHaveOneWinner(t *testing.T) {
 		go func() {
 			defer group.Done()
 			<-start
-			_, _, err := s.Update(ctx, r.ID, "agent-b", "", UpdateInput{Version: 1, Status: pointer("in_progress")})
+			_, _, err := s.Update(ctx, r.ID, reviewer("agent-b"), "", UpdateInput{Version: 1, Status: pointer("in_progress")})
 			errorsReceived <- err
 		}()
 	}
@@ -143,15 +143,15 @@ func TestIdempotencyReplaySnapshotAndMisuse(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	input := CreateInput{Kind: "task", Title: "Original task"}
-	r, replay, err := s.Create(ctx, "agent-a", "request-1", input)
+	r, replay, err := s.Create(ctx, reviewer("agent-a"), "request-1", input)
 	if err != nil || replay {
 		t.Fatalf("create: %t %v", replay, err)
 	}
-	updated, _, err := s.Update(ctx, r.ID, "agent-b", "request-2", UpdateInput{Version: 1, Title: pointer("Changed task")})
+	updated, _, err := s.Update(ctx, r.ID, reviewer("agent-b"), "request-2", UpdateInput{Version: 1, Title: pointer("Changed task")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, replay, err := s.Create(ctx, "agent-a", "request-1", input)
+	got, replay, err := s.Create(ctx, reviewer("agent-a"), "request-1", input)
 	if err != nil || !replay || !reflect.DeepEqual(got, r) {
 		t.Fatalf("original snapshot replay: %+v %t %v", got, replay, err)
 	}
@@ -161,19 +161,19 @@ func TestIdempotencyReplaySnapshotAndMisuse(t *testing.T) {
 	}
 	other := input
 	other.Title = "Different input"
-	_, _, err = s.Create(ctx, "agent-a", "request-1", other)
+	_, _, err = s.Create(ctx, reviewer("agent-a"), "request-1", other)
 	if !errors.Is(err, ErrIdempotency) {
 		t.Fatalf("misuse returned %v", err)
 	}
-	_, _, err = s.Update(ctx, r.ID, "agent-a", "request-1", UpdateInput{Version: 2, Title: pointer("No")})
+	_, _, err = s.Update(ctx, r.ID, reviewer("agent-a"), "request-1", UpdateInput{Version: 2, Title: pointer("No")})
 	if !errors.Is(err, ErrIdempotency) {
 		t.Fatalf("cross-operation reuse: %v", err)
 	}
-	otherActor, replay, err := s.Create(ctx, "agent-b", "request-1", input)
+	otherActor, replay, err := s.Create(ctx, reviewer("agent-b"), "request-1", input)
 	if err != nil || replay || otherActor.ID == r.ID {
 		t.Fatalf("actor scope: %+v %t %v", otherActor, replay, err)
 	}
-	_, _, err = s.Update(ctx, otherActor.ID, "agent-b", "request-2", UpdateInput{Version: 1, Title: pointer("Changed task")})
+	_, _, err = s.Update(ctx, otherActor.ID, reviewer("agent-b"), "request-2", UpdateInput{Version: 1, Title: pointer("Changed task")})
 	if !errors.Is(err, ErrIdempotency) {
 		t.Fatalf("cross-record reuse: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestConcurrentIdempotentCreate(t *testing.T) {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			r, _, err := s.Create(ctx, "agent-a", "shared-request", CreateInput{Kind: "knowledge", Title: "Same request"})
+			r, _, err := s.Create(ctx, reviewer("agent-a"), "shared-request", CreateInput{Kind: "knowledge", Title: "Same request"})
 			results <- r
 			errCh <- err
 		}()
@@ -231,7 +231,7 @@ func TestFiltersSearchAndPagination(t *testing.T) {
 	createRecord(t, s, CreateInput{Kind: "knowledge", Title: "SQLite Search", Body: "Design durable persistence", ProjectID: project.ID, Priority: 2, Owner: "agent-b", Tags: []string{"storage"}})
 	global := createRecord(t, s, CreateInput{Kind: "principle", Title: "Prefer durable SQLite storage", Priority: 1, Tags: []string{"storage"}})
 	archived := createRecord(t, s, CreateInput{Kind: "task", Title: "Archived SQLite work", Priority: 5})
-	if _, _, err := s.Update(ctx, archived.ID, "agent-a", "", UpdateInput{Version: 1, Archived: pointer(true)}); err != nil {
+	if _, _, err := s.Update(ctx, archived.ID, reviewer("agent-a"), "", UpdateInput{Version: 1, Archived: pointer(true)}); err != nil {
 		t.Fatal(err)
 	}
 	options := ListOptions{Kind: "task", ProjectID: project.ID, Status: "in_progress", Owner: "agent-a", Tag: "STORAGE", Query: "sqlite durable"}
@@ -261,7 +261,7 @@ func TestFiltersSearchAndPagination(t *testing.T) {
 	if err != nil || got.Total != 5 {
 		t.Fatalf("quoted plaintext: %+v %v", got, err)
 	}
-	if _, _, err := s.Update(ctx, wanted.ID, "agent-b", "", UpdateInput{Version: 1, Title: pointer("Changed title"), Body: pointer("Removed the old search terms")}); err != nil {
+	if _, _, err := s.Update(ctx, wanted.ID, reviewer("agent-b"), "", UpdateInput{Version: 1, Title: pointer("Changed title"), Body: pointer("Removed the old search terms")}); err != nil {
 		t.Fatal(err)
 	}
 	got, err = s.List(ctx, ListOptions{Query: "sqlite durable", Kind: "task", Status: "in_progress", ProjectID: project.ID})
@@ -275,10 +275,10 @@ func TestReferenceValidationAndArchivedProjects(t *testing.T) {
 	ctx := context.Background()
 	project := createRecord(t, s, CreateInput{Kind: "project", Title: "First project"})
 	task := createRecord(t, s, CreateInput{Kind: "task", Title: "First task", ProjectID: project.ID, Links: []string{project.ID}})
-	if _, _, err := s.Update(ctx, project.ID, "agent-a", "", UpdateInput{Version: 1, Archived: pointer(true)}); err != nil {
+	if _, _, err := s.Update(ctx, project.ID, reviewer("agent-a"), "", UpdateInput{Version: 1, Archived: pointer(true)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.Update(ctx, task.ID, "agent-a", "", UpdateInput{Version: 1, Title: pointer("Still editable"), ProjectID: &project.ID}); err != nil {
+	if _, _, err := s.Update(ctx, task.ID, reviewer("agent-a"), "", UpdateInput{Version: 1, Title: pointer("Still editable"), ProjectID: &project.ID}); err != nil {
 		t.Fatalf("cannot retain old archived project: %v", err)
 	}
 	for _, input := range []CreateInput{
@@ -288,14 +288,14 @@ func TestReferenceValidationAndArchivedProjects(t *testing.T) {
 		{Kind: "project", Title: "Nested project", ProjectID: project.ID},
 		{Kind: "knowledge", Title: "Missing link", Links: []string{"missing"}},
 	} {
-		_, _, err := s.Create(ctx, "agent-a", "", input)
+		_, _, err := s.Create(ctx, reviewer("agent-a"), "", input)
 		assertValidation(t, err)
 	}
 	linked := createRecord(t, s, CreateInput{Kind: "knowledge", Title: "An archived record may still be linked", Links: []string{project.ID}})
 	if len(linked.Links) != 1 {
 		t.Fatal("missing link")
 	}
-	_, _, err := s.Update(ctx, task.ID, "agent-a", "", UpdateInput{Version: 2, Links: pointer([]string{"missing"})})
+	_, _, err := s.Update(ctx, task.ID, reviewer("agent-a"), "", UpdateInput{Version: 2, Links: pointer([]string{"missing"})})
 	assertValidation(t, err)
 	history, err := s.History(ctx, task.ID)
 	if err != nil || len(history) != 2 {
@@ -307,15 +307,15 @@ func TestNotesAreAppendOnlyButArchivable(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	note := createRecord(t, s, CreateInput{Kind: "note", Title: "Handover", Body: "Next agent should review the decision."})
-	_, _, err := s.Update(ctx, note.ID, "agent-b", "", UpdateInput{Version: 1, Body: pointer("Changed")})
+	_, _, err := s.Update(ctx, note.ID, reviewer("agent-b"), "", UpdateInput{Version: 1, Body: pointer("Changed")})
 	assertValidation(t, err)
-	_, _, err = s.Update(ctx, note.ID, "agent-b", "", UpdateInput{Version: 1, Tags: pointer([]string{"changed"})})
+	_, _, err = s.Update(ctx, note.ID, reviewer("agent-b"), "", UpdateInput{Version: 1, Tags: pointer([]string{"changed"})})
 	assertValidation(t, err)
-	archived, _, err := s.Update(ctx, note.ID, "agent-b", "", UpdateInput{Version: 1, Archived: pointer(true)})
+	archived, _, err := s.Update(ctx, note.ID, reviewer("agent-b"), "", UpdateInput{Version: 1, Archived: pointer(true)})
 	if err != nil || !archived.Archived || archived.Version != 2 || archived.Body != note.Body {
 		t.Fatalf("archive: %+v %v", archived, err)
 	}
-	restored, _, err := s.Update(ctx, note.ID, "agent-b", "", UpdateInput{Version: 2, Archived: pointer(false)})
+	restored, _, err := s.Update(ctx, note.ID, reviewer("agent-b"), "", UpdateInput{Version: 2, Archived: pointer(false)})
 	if err != nil || restored.Archived || restored.Version != 3 {
 		t.Fatalf("restore: %+v %v", restored, err)
 	}
@@ -342,18 +342,21 @@ func TestValidationAndDefaults(t *testing.T) {
 		"tag count":     {Kind: "task", Title: "Title", Tags: make([]string, 33)},
 		"source":        {Kind: "task", Title: "Title", Sources: []string{strings.Repeat("a", 2049)}},
 	} {
-		t.Run(name, func(t *testing.T) { _, _, err := s.Create(ctx, "agent-a", "", input); assertValidation(t, err) })
+		t.Run(name, func(t *testing.T) {
+			_, _, err := s.Create(ctx, reviewer("agent-a"), "", input)
+			assertValidation(t, err)
+		})
 	}
 	for _, actor := range []string{"", "  ", strings.Repeat("a", 201)} {
-		_, _, err := s.Create(ctx, actor, "", CreateInput{Kind: "task", Title: "Test"})
+		_, _, err := s.Create(ctx, reviewer(actor), "", CreateInput{Kind: "task", Title: "Test"})
 		assertValidation(t, err)
 	}
 	r := createRecord(t, s, CreateInput{Kind: "task", Title: "Versions"})
 	for _, input := range []UpdateInput{{Version: 0, Title: pointer("New")}, {Version: -1, Title: pointer("New")}, {Version: 1}} {
-		_, _, err := s.Update(ctx, r.ID, "agent-a", "", input)
+		_, _, err := s.Update(ctx, r.ID, reviewer("agent-a"), "", input)
 		assertValidation(t, err)
 	}
-	_, _, err := s.Update(ctx, r.ID, "agent-a", "", UpdateInput{Version: 99, Title: pointer("Future")})
+	_, _, err := s.Update(ctx, r.ID, reviewer("agent-a"), "", UpdateInput{Version: 99, Title: pointer("Future")})
 	if !errors.Is(err, ErrConflict) {
 		t.Fatalf("future version: %v", err)
 	}
@@ -371,7 +374,7 @@ func TestValidationAndDefaults(t *testing.T) {
 	if _, err := s.History(ctx, "missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("history missing: %v", err)
 	}
-	if _, _, err := s.Update(ctx, "missing", "agent-a", "", UpdateInput{Version: 1, Title: pointer("Missing")}); !errors.Is(err, ErrNotFound) {
+	if _, _, err := s.Update(ctx, "missing", reviewer("agent-a"), "", UpdateInput{Version: 1, Title: pointer("Missing")}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("update missing: %v", err)
 	}
 }
@@ -379,9 +382,9 @@ func TestValidationAndDefaults(t *testing.T) {
 func TestRejectedMutationDoesNotReserveIdempotencyKey(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	_, _, err := s.Create(ctx, "agent-a", "retry-after-fix", CreateInput{Kind: "task", Title: ""})
+	_, _, err := s.Create(ctx, reviewer("agent-a"), "retry-after-fix", CreateInput{Kind: "task", Title: ""})
 	assertValidation(t, err)
-	r, replay, err := s.Create(ctx, "agent-a", "retry-after-fix", CreateInput{Kind: "task", Title: "Now valid"})
+	r, replay, err := s.Create(ctx, reviewer("agent-a"), "retry-after-fix", CreateInput{Kind: "task", Title: "Now valid"})
 	if err != nil || replay || r.Version != 1 {
 		t.Fatalf("valid retry: %+v %t %v", r, replay, err)
 	}
@@ -399,7 +402,7 @@ WHEN NEW.version = 2 BEGIN SELECT RAISE(ABORT, 'simulated revision failure'); EN
 		t.Fatal(err)
 	}
 	input := UpdateInput{Version: 1, Title: pointer("Replacement searchable text")}
-	if _, _, err := s.Update(ctx, r.ID, "agent-b", "retry-write", input); err == nil {
+	if _, _, err := s.Update(ctx, r.ID, reviewer("agent-b"), "retry-write", input); err == nil {
 		t.Fatal("expected simulated storage failure")
 	}
 	got, err := s.Get(ctx, r.ID)
@@ -419,7 +422,7 @@ WHEN NEW.version = 2 BEGIN SELECT RAISE(ABORT, 'simulated revision failure'); EN
 	if _, err := s.db.Exec("DROP TRIGGER fail_revision"); err != nil {
 		t.Fatal(err)
 	}
-	updated, replay, err := s.Update(ctx, r.ID, "agent-b", "retry-write", input)
+	updated, replay, err := s.Update(ctx, r.ID, reviewer("agent-b"), "retry-write", input)
 	if err != nil || replay || updated.Version != 2 {
 		t.Fatalf("receipt partially committed: %+v %t %v", updated, replay, err)
 	}
@@ -446,7 +449,7 @@ func TestSearchTreatsPathologicalStringsAsPlainText(t *testing.T) {
 	if _, err := s.Get(ctx, r.ID); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := s.Create(ctx, "agent-a", "", CreateInput{Kind: "knowledge", Title: "Invalid UTF-8", Body: string([]byte{0xff})})
+	_, _, err := s.Create(ctx, reviewer("agent-a"), "", CreateInput{Kind: "knowledge", Title: "Invalid UTF-8", Body: string([]byte{0xff})})
 	assertValidation(t, err)
 	_, err = s.List(ctx, ListOptions{Query: string([]byte{0xff})})
 	assertValidation(t, err)
@@ -462,7 +465,7 @@ func TestOrderingUsesPriorityThenUpdateTimeThenID(t *testing.T) {
 	if err != nil || len(result.Items) != 3 || result.Items[0].ID != second.ID || result.Items[1].ID != first.ID {
 		t.Fatalf("creation order: %+v %v", result, err)
 	}
-	_, _, err = s.Update(ctx, first.ID, "agent-b", "", UpdateInput{Version: 1, Body: pointer("Updated most recently")})
+	_, _, err = s.Update(ctx, first.ID, reviewer("agent-b"), "", UpdateInput{Version: 1, Body: pointer("Updated most recently")})
 	if err != nil {
 		t.Fatal(err)
 	}

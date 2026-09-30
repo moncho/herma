@@ -1,5 +1,5 @@
 // This example uses two authenticated clients against a running herma service.
-// Run it after creating session-a and session-b identities, then starting herma serve.
+// Run it after adding session-a and session-b identities (herma identity add, agents by default), then starting herma serve.
 package main
 
 import (
@@ -31,9 +31,11 @@ func run() error {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("read demo credentials: %w; first run herma init and herma identity add session-a/session-b", err)
+		return fmt.Errorf("read demo credentials: %w; first run herma init, then herma identity add session-a and herma identity add session-b (agents by default)", err)
 	}
-	var identities map[string]string
+	var identities map[string]struct {
+		Token string `json:"token"`
+	}
 	if err = json.Unmarshal(data, &identities); err != nil {
 		return err
 	}
@@ -41,11 +43,11 @@ func run() error {
 	if endpoint == "" {
 		endpoint = "http://127.0.0.1:8765"
 	}
-	a, err := client.New(endpoint, identities["session-a"])
+	a, err := client.New(endpoint, identities["session-a"].Token)
 	if err != nil {
 		return fmt.Errorf("session-a: %w", err)
 	}
-	b, err := client.New(endpoint, identities["session-b"])
+	b, err := client.New(endpoint, identities["session-b"].Token)
 	if err != nil {
 		return fmt.Errorf("session-b: %w", err)
 	}

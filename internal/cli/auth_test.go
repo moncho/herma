@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/moncho/herma/internal/store"
 )
 
 func TestTokenAndSelectedIdentityFailBeforeSendingRequest(t *testing.T) {
@@ -92,7 +94,7 @@ func TestSelectedIdentityWithoutTokenUsesCredentials(t *testing.T) {
 			if err := initCredentials(path); err != nil {
 				t.Fatal(err)
 			}
-			if err := addIdentity(path, "worker"); err != nil {
+			if err := addIdentity(path, "worker", store.RoleAgent); err != nil {
 				t.Fatal(err)
 			}
 			credentials, err := loadCredentials(path)
@@ -102,7 +104,7 @@ func TestSelectedIdentityWithoutTokenUsesCredentials(t *testing.T) {
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests.Add(1)
-				if r.Header.Get("Authorization") != "Bearer "+credentials["worker"] {
+				if r.Header.Get("Authorization") != "Bearer "+credentials["worker"].Token {
 					t.Error("did not authenticate as the selected identity")
 				}
 				_, _ = w.Write([]byte(`{}`))
@@ -122,7 +124,7 @@ func TestLocalCommandsIgnoreClientAuthenticationSettings(t *testing.T) {
 	cleanEnv(t)
 	t.Setenv("HERMA_TOKEN", strings.Repeat("t", 64))
 	t.Setenv("HERMA_IDENTITY", "different-identity")
-	path := filepath.Join(t.TempDir(), "credentials.json")
+	path := filepath.Join(shortDir(t), "credentials.json")
 	for _, command := range [][]string{{"init"}, {"identity", "add", "worker"}} {
 		args := append([]string{"--credentials", path, "--identity", "owner"}, command...)
 		var stdout, stderr bytes.Buffer

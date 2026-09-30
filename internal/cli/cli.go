@@ -9,34 +9,40 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 
-	"github.com/moncho/herma/internal/api"
 	"github.com/moncho/herma/internal/client"
 	"github.com/moncho/herma/internal/store"
 )
 
-const usage = `Usage: herma [--url URL] [--credentials PATH] [--identity NAME] COMMAND [options]
+// defaultIdentity is an agent so that commands run without flags, including
+// by agent sessions, can never approve knowledge.
+const defaultIdentity = "local-agent"
+
+const usage = `Usage: herma [--url URL] [--credentials PATH] [--identity NAME] [--socket PATH] COMMAND [options]
 
 Global flags must come before the command. Environment defaults:
   HERMA_URL          http://127.0.0.1:8765
   HERMA_CREDENTIALS  .herma/credentials.json
-  HERMA_IDENTITY     owner
+  HERMA_IDENTITY     local-agent
+  HERMA_SOCKET       herma.sock next to the credentials file
   HERMA_TOKEN        optional bearer token; replaces credential-file authentication
 
 For client commands, HERMA_TOKEN cannot be combined with --identity or a nonempty
 HERMA_IDENTITY. Unset HERMA_TOKEN to use a named identity from the credentials file.
 
 Commands:
-  init                         Create owner credentials without overwriting
-  identity add NAME            Add credentials for an agent; restart server to reload
+  init                         Create owner (reviewer) and local-agent credentials without overwriting
+  identity add NAME [--role agent|read-only|reviewer]
+                               Add credentials; the role defaults to agent
+  identity revoke NAME         Remove an identity; the last reviewer cannot be removed
+  whoami                       Show the authenticated identity, role and listener
   serve [--db PATH] [--listen HOST:PORT]
   create --kind KIND --title TITLE [--body TEXT | --body-file PATH] [fields]
   list [--project ID] [--kind KIND] [--q TEXT] [filters]
@@ -46,23 +52,25 @@ Commands:
   project bind --project ID [--dir PATH] [--max-bytes N]
   hook install --client claude|codex|both [--dir PATH]
   hook session-start           Load bounded project context for a SessionStart hook
+  review [--limit N] [--offset N]  List proposed knowledge and principles awaiting review
   context [--project ID] [--max-bytes N] [--include-durable]
   schema
   export
 
 Fields: --title, --body, --body-file, --project, --status, --priority,
         --owner, --tags, --links, --sources. Lists are comma-separated.
+The human reviewer accepts or rejects with update ID --version N --status accepted|rejected (--identity owner).
 Writes accept --request-id KEY for safe retries; write errors include the key used.
 Updates send only supplied fields. Record bodies may contain up to 64 KiB of UTF-8.
 Use COMMAND --help for command options; for update use update ID --help.
 Successful results are JSON on stdout; context uses compact JSON to honor its byte budget.
-herma coordinates sessions and handoffs; durable knowledge belongs in memory/wiki,
-and real tasks stay in Linear. Errors and server logs go to stderr.
+herma holds session coordination and reviewed durable knowledge (proposed by
+agents, accepted by the reviewer); real tasks stay in Linear. Errors and server logs go to stderr.
 `
 
 type config struct {
-	endpoint, credentials, identity string
-	identitySelected                bool
+	endpoint, credentials, identity, socket string
+	identitySelected                        bool
 }
 
 func envDefault(key, fallback string) string {
@@ -99,7 +107,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	f := flags("herma", stderr)
 	f.StringVar(&cfg.endpoint, "url", envDefault("HERMA_URL", "http://127.0.0.1:8765"), "knowledge base server URL")
 	f.StringVar(&cfg.credentials, "credentials", envDefault("HERMA_CREDENTIALS", ".herma/credentials.json"), "credentials JSON path")
-	f.StringVar(&cfg.identity, "identity", envDefault("HERMA_IDENTITY", "owner"), "authenticated identity")
+	f.StringVar(&cfg.identity, "identity", envDefault("HERMA_IDENTITY", defaultIdentity), "authenticated identity")
+	f.StringVar(&cfg.socket, "socket", envDefault("HERMA_SOCKET", ""), "Unix socket path; defaults to herma.sock next to the credentials file")
 	f.Usage = func() { fmt.Fprint(stderr, usage) }
 	if err := f.Parse(args); err != nil {
 		return err
@@ -124,15 +133,14 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		if err := initCredentials(cfg.credentials); err != nil {
 			return err
 		}
-		return output(stdout, map[string]string{"status": "created", "identity": "owner", "credentials": cfg.credentials})
+		return output(stdout, map[string]string{"status": "created", "reviewer": "owner", "agent": "local-agent", "credentials": cfg.credentials})
 	case "identity":
-		if len(rest) != 2 || rest[0] != "add" {
-			return errors.New("usage: herma [global flags] identity add NAME")
-		}
-		if err := addIdentity(cfg.credentials, rest[1]); err != nil {
+		return identityCommand(cfg, rest, stdout, stderr)
+	case "whoami":
+		if err := noOptions(command, rest, stderr); err != nil {
 			return err
 		}
-		return output(stdout, map[string]string{"status": "created", "identity": rest[1], "credentials": cfg.credentials, "message": "Restart the server to load the new identity."})
+		return cfg.request(ctx, stdout, http.MethodGet, "/v1/whoami", nil, nil, "")
 	case "serve":
 		return serve(ctx, cfg, rest, stderr)
 	case "create":
@@ -143,6 +151,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return list(ctx, cfg, rest, stdout, stderr)
 	case "project":
 		return bindProject(ctx, cfg, rest, stdout, stderr)
+	case "review":
+		return review(ctx, cfg, rest, stdout, stderr)
 	case "hook":
 		return hook(ctx, cfg, rest, stdin, stdout, stderr)
 	case "get", "history":
@@ -211,21 +221,38 @@ func (cfg config) request(ctx context.Context, stdout io.Writer, method, path st
 	return writeError(err, requestID)
 }
 
+// socketPath is shared by herma serve and reviewer clients so that both find the
+// same socket beside the credentials file by default.
+func (cfg config) socketPath() (string, error) {
+	path := cfg.socket
+	if path == "" {
+		path = filepath.Join(filepath.Dir(cfg.credentials), "herma.sock")
+	}
+	return filepath.Abs(path)
+}
+
 func (cfg config) client() (*client.Client, error) {
 	token := os.Getenv("HERMA_TOKEN")
 	if token != "" && cfg.identitySelected {
 		return nil, errors.New("HERMA_TOKEN cannot be combined with --identity or HERMA_IDENTITY; unset HERMA_TOKEN to use a named identity, or remove the identity settings to use the token")
 	}
 	if token == "" {
-		identities, err := loadCredentials(cfg.credentials)
+		credentials, err := loadCredentials(cfg.credentials)
 		if err != nil {
 			return nil, err
 		}
-		var ok bool
-		token, ok = identities[cfg.identity]
+		entry, ok := credentials[cfg.identity]
 		if !ok {
 			return nil, fmt.Errorf("identity %q is not in the credentials file", cfg.identity)
 		}
+		if entry.Role == store.RoleReviewer {
+			socket, err := cfg.socketPath()
+			if err != nil {
+				return nil, err
+			}
+			return client.NewSocket(socket, entry.Token)
+		}
+		token = entry.Token
 	}
 	return client.New(cfg.endpoint, token)
 }
@@ -417,46 +444,45 @@ func list(ctx context.Context, cfg config, args []string, stdout, stderr io.Writ
 	return cfg.request(ctx, stdout, http.MethodGet, "/v1/records", query, nil, "")
 }
 
-func serve(ctx context.Context, cfg config, args []string, stderr io.Writer) error {
-	fs := flags("serve", stderr)
-	dbPath := fs.String("db", ".herma/knowledge.sqlite3", "SQLite database path")
-	listen := fs.String("listen", "127.0.0.1:8765", "HTTP listen address")
-	if err := parse(fs, args); err != nil {
-		return err
+func identityCommand(cfg config, args []string, stdout, stderr io.Writer) error {
+	usage := errors.New("usage: herma [global flags] identity add NAME [--role agent|read-only|reviewer] | identity revoke NAME")
+	if len(args) < 2 || strings.HasPrefix(args[1], "-") {
+		return usage
 	}
-	identities, err := loadCredentials(cfg.credentials)
-	if err != nil {
-		return err
-	}
-	if err := prepareDatabase(*dbPath); err != nil {
-		return err
-	}
-	db, err := store.Open(*dbPath)
-	if err != nil {
-		return fmt.Errorf("open knowledge database: %w", err)
-	}
-	defer db.Close()
-	server := &http.Server{Addr: *listen, Handler: api.NewHandler(db, identities), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
-	listener, err := net.Listen("tcp", *listen)
-	if err != nil {
-		return fmt.Errorf("listen for knowledge base requests: %w", err)
-	}
-	finished := make(chan error, 1)
-	go func() { finished <- server.Serve(listener) }()
-	fmt.Fprintf(stderr, "Knowledge base listening on %s; database %s\n", listener.Addr(), *dbPath)
-	select {
-	case err := <-finished:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
+	name := args[1]
+	switch args[0] {
+	case "add":
+		fs := flags("identity add", stderr)
+		role := fs.String("role", string(store.RoleAgent), "reviewer, agent, or read-only")
+		if err := parse(fs, args[2:]); err != nil {
+			return err
 		}
-		return fmt.Errorf("serve knowledge base: %w", err)
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			_ = server.Close()
-			return fmt.Errorf("shut down server: %w", err)
+		if err := addIdentity(cfg.credentials, name, store.Role(*role)); err != nil {
+			return err
 		}
-		return nil
+		return output(stdout, map[string]string{"status": "created", "identity": name, "role": *role, "credentials": cfg.credentials, "message": "The running server loads new identities within a few seconds."})
+	case "revoke":
+		if len(args) != 2 {
+			return usage
+		}
+		if err := revokeIdentity(cfg.credentials, name); err != nil {
+			return err
+		}
+		return output(stdout, map[string]string{"status": "revoked", "identity": name, "credentials": cfg.credentials, "message": "The running server stops accepting this token within a few seconds."})
+	default:
+		return usage
 	}
+}
+
+// identityRole returns the role of the selected named identity.
+func (cfg config) identityRole() (store.Role, error) {
+	credentials, err := loadCredentials(cfg.credentials)
+	if err != nil {
+		return "", err
+	}
+	entry, ok := credentials[cfg.identity]
+	if !ok {
+		return "", fmt.Errorf("identity %q is not in the credentials file", cfg.identity)
+	}
+	return entry.Role, nil
 }

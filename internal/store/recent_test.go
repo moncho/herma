@@ -15,7 +15,7 @@ func TestRecentFirstIncludesLatestNoteBeyondPriorityPage(t *testing.T) {
 	}
 	latest := createRecord(t, s, CreateInput{Kind: "note", Title: "Latest handover", ProjectID: project.ID, Priority: 0})
 	archived := createRecord(t, s, CreateInput{Kind: "note", Title: "Later but archived", ProjectID: project.ID, Priority: 5})
-	if _, _, err := s.Update(ctx, archived.ID, "agent-a", "", UpdateInput{Version: 1, Archived: pointer(true)}); err != nil {
+	if _, _, err := s.Update(ctx, archived.ID, reviewer("agent-a"), "", UpdateInput{Version: 1, Archived: pointer(true)}); err != nil {
 		t.Fatal(err)
 	}
 	options := ListOptions{Kind: "note", ProjectID: project.ID, Limit: 100, RecentFirst: true}

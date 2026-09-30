@@ -19,7 +19,7 @@ import (
 
 func createContextRecord(t *testing.T, s *store.Store, input store.CreateInput) store.Record {
 	t.Helper()
-	record, _, err := s.Create(context.Background(), "context-test-session", "", input)
+	record, _, err := s.Create(context.Background(), store.Author{Name: "context-test-session", Role: store.RoleReviewer}, "", input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,8 +60,8 @@ func TestContextDefaultsToCoordinationAndOptsInDurable(t *testing.T) {
 	task := createContextRecord(t, s, store.CreateInput{Kind: "task", Title: "Next session intention", Body: "Continue the investigation.", ProjectID: project.ID, Owner: "next-session", Sources: []string{"https://linear.app/example/issue/ONE"}})
 	feedback := createContextRecord(t, s, store.CreateInput{Kind: "feedback", Title: "Follow up", ProjectID: project.ID})
 	note := createContextRecord(t, s, store.CreateInput{Kind: "note", Title: "Handoff", Body: "The latest experiment is in the workspace.", ProjectID: project.ID})
-	knowledge := createContextRecord(t, s, store.CreateInput{Kind: "knowledge", Title: "Durable memory entry", Status: "accepted"})
-	principle := createContextRecord(t, s, store.CreateInput{Kind: "principle", Title: "Project principle", Status: "accepted", ProjectID: project.ID})
+	knowledge := createContextRecord(t, s, store.CreateInput{Kind: "knowledge", Title: "Durable memory entry", Status: "accepted", Sources: []string{"https://example.com/review"}})
+	principle := createContextRecord(t, s, store.CreateInput{Kind: "principle", Title: "Project principle", Status: "accepted", Sources: []string{"https://example.com/review"}, ProjectID: project.ID})
 	createContextRecord(t, s, store.CreateInput{Kind: "knowledge", Title: "Unreviewed idea", Status: "proposed", ProjectID: project.ID})
 	createContextRecord(t, s, store.CreateInput{Kind: "task", Title: "Completed intention", Status: "done", ProjectID: project.ID})
 	createContextRecord(t, s, store.CreateInput{Kind: "feedback", Title: "Already handled", Status: "resolved", ProjectID: project.ID})
@@ -121,7 +121,7 @@ func TestContextByteBudgetIncludesUnicodeEscapingAndHugeMetadata(t *testing.T) {
 		tags[index] = fmt.Sprintf("%02d%s", index, strings.Repeat("x", 62))
 	}
 	body := strings.Repeat("🧠<&>\u2028\t", 5000)
-	project, _, err := s.Create(context.Background(), strings.Repeat(">", 200), "", store.CreateInput{
+	project, _, err := s.Create(context.Background(), store.Author{Name: strings.Repeat(">", 200), Role: store.RoleReviewer}, "", store.CreateInput{
 		Kind: "project", Title: strings.Repeat("<&界", 100), Body: body,
 		Owner: strings.Repeat("<", 200), Sources: sources, Links: links, Tags: tags, Priority: 5,
 	})
@@ -184,6 +184,8 @@ func assertContextPreview(t *testing.T, original store.Record, preview contextRe
 		"updated_by": original.UpdatedBy != preview.UpdatedBy, "project_id": original.ProjectID != preview.ProjectID,
 		"priority": original.Priority != preview.Priority, "updated_at": preview.UpdatedAt == nil,
 		"sources": len(original.Sources) != len(preview.Sources), "links": len(original.Links) != len(preview.Links),
+		"reviewed_by": original.ReviewedBy != preview.ReviewedBy,
+		"reviewed_at": (original.ReviewedAt == nil) != (preview.ReviewedAt == nil),
 	} {
 		if changed && !flags[field] {
 			t.Errorf("context silently changed %s for %s", field, original.ID)
@@ -210,7 +212,7 @@ func TestContextPrioritizesCoordinationThenRecentNotesOverDurable(t *testing.T) 
 		createContextRecord(t, s, store.CreateInput{Kind: "note", Title: fmt.Sprintf("Old handoff %03d", index), ProjectID: project.ID, Priority: 5, Body: strings.Repeat("old ", 100)})
 	}
 	latest := createContextRecord(t, s, store.CreateInput{Kind: "note", Title: "Newest handoff has lower priority", ProjectID: project.ID, Priority: 0, Body: strings.Repeat("recent ", 100)})
-	createContextRecord(t, s, store.CreateInput{Kind: "knowledge", Title: "Durable fact with high priority", Status: "accepted", Priority: 5, Body: strings.Repeat("durable ", 100)})
+	createContextRecord(t, s, store.CreateInput{Kind: "knowledge", Title: "Durable fact with high priority", Status: "accepted", Sources: []string{"https://example.com/review"}, Priority: 5, Body: strings.Repeat("durable ", 100)})
 	packet := requestContext(t, h, project.ID, "&max_bytes=4096&include_durable=true", 4096)
 	if len(packet.Tasks) != 1 || packet.Tasks[0].ID != task.ID || len(packet.Feedback) != 1 || packet.Feedback[0].ID != feedback.ID {
 		t.Error("high-priority notes or durable knowledge crowded out session intentions and feedback")

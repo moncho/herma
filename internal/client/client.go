@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -21,7 +22,28 @@ const maxResponseBytes = 16 << 20
 type Client struct {
 	baseURL string
 	token   string
+	socket  string
 	http    *http.Client
+}
+
+// NewSocket connects through a local Unix domain socket. Reviewer identities
+// use it because the server accepts reviewer tokens only there.
+func NewSocket(path, token string) (*Client, error) {
+	if !filepath.IsAbs(path) {
+		return nil, errors.New("socket path must be absolute")
+	}
+	if strings.TrimSpace(token) == "" || strings.ContainsAny(token, "\r\n") {
+		return nil, errors.New("a nonempty bearer token is required")
+	}
+	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var dialer net.Dialer
+		return dialer.DialContext(ctx, "unix", path)
+	}}
+	return &Client{baseURL: "http://herma.socket", token: token, socket: path, http: &http.Client{
+		Timeout:       30 * time.Second,
+		Transport:     transport,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
+	}}, nil
 }
 
 // New never forwards credentials through a redirect. URL credentials, query
@@ -80,6 +102,9 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
+		if c.socket != "" && (errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOENT)) {
+			return nil, fmt.Errorf("knowledge base server is not listening on socket %s; start herma serve on this machine: %w", c.socket, err)
+		}
 		if errors.Is(err, syscall.ECONNREFUSED) {
 			host := strings.TrimSuffix(req.URL.Hostname(), ".")
 			if strings.EqualFold(host, "localhost") || net.ParseIP(host).IsLoopback() {
