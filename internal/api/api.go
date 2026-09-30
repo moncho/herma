@@ -276,7 +276,9 @@ func (h *handler) exportSnapshot(ctx context.Context) (exportSnapshot, error) {
 			return exportSnapshot{}, err
 		}
 		result.Records = append(result.Records, page.Items...)
-		if len(result.Records) >= page.Total {
+		// A short page also ends the scan, so a count that disagrees with the
+		// rows cannot keep this loop issuing empty queries until the deadline.
+		if len(result.Records) >= page.Total || len(page.Items) < 200 {
 			break
 		}
 	}
