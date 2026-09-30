@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/moncho/herma/internal/store"
 )
 
 func TestStaleCredentialsLockExplainsSafeRecovery(t *testing.T) {
@@ -39,12 +41,12 @@ func TestStaleCredentialsLockExplainsSafeRecovery(t *testing.T) {
 	if !errors.Is(err, os.ErrExist) {
 		t.Fatalf("expected existing-lock error, got %v", err)
 	}
-	for _, detail := range []string{lockPath, "remove that file only after ensuring no herma identity add process is running", "then retry"} {
+	for _, detail := range []string{lockPath, "remove that file only after ensuring no herma identity command is running", "then retry"} {
 		if !strings.Contains(err.Error(), detail) {
 			t.Fatalf("lock error lacks recovery detail %q: %v", detail, err)
 		}
 	}
-	if strings.Contains(err.Error()+stdout.String()+stderr.String(), before["owner"]) {
+	if strings.Contains(err.Error()+stdout.String()+stderr.String(), before["owner"].Token) {
 		t.Fatal("lock failure exposed the owner token")
 	}
 	unchanged, readErr := os.ReadFile(path)
@@ -68,11 +70,11 @@ func TestStaleCredentialsLockExplainsSafeRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(after) != 2 || after["owner"] != before["owner"] || len(after["research-agent"]) != 64 || after["research-agent"] == before["owner"] {
+	if len(after) != 3 || after["owner"] != before["owner"] || len(after["research-agent"].Token) != 64 || after["research-agent"].Token == before["owner"].Token {
 		t.Fatal("identity retry did not preserve the owner and add one distinct identity")
 	}
 	for _, token := range after {
-		if strings.Contains(stdout.String()+stderr.String(), token) {
+		if strings.Contains(stdout.String()+stderr.String(), token.Token) {
 			t.Fatal("successful identity retry exposed a token")
 		}
 	}
@@ -83,7 +85,7 @@ func TestStaleCredentialsLockExplainsSafeRecovery(t *testing.T) {
 
 func TestCredentialsLockFileFailureDoesNotSuggestRemoval(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing directory", "credentials.json")
-	err := addIdentity(path, "research-agent")
+	err := addIdentity(path, "research-agent", store.RoleAgent)
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected missing-parent failure, got %v", err)
 	}

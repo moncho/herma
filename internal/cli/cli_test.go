@@ -17,7 +17,7 @@ import (
 
 func cleanEnv(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{"HERMA_URL", "HERMA_CREDENTIALS", "HERMA_IDENTITY", "HERMA_TOKEN"} {
+	for _, key := range []string{"HERMA_URL", "HERMA_CREDENTIALS", "HERMA_IDENTITY", "HERMA_TOKEN", "HERMA_SOCKET"} {
 		t.Setenv(key, "")
 	}
 }
@@ -34,7 +34,7 @@ func TestCredentialsCreationAndIdentityAddition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner := credentials["owner"]
+	owner := credentials["owner"].Token
 	if len(owner) != 64 {
 		t.Fatalf("unexpected token length %d", len(owner))
 	}
@@ -57,16 +57,16 @@ func TestCredentialsCreationAndIdentityAddition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if credentials["owner"] != owner || credentials["research-agent"] == owner || len(credentials["research-agent"]) != 64 {
+	if credentials["owner"].Token != owner || credentials["research-agent"].Token == owner || len(credentials["research-agent"].Token) != 64 {
 		t.Fatal("identity addition damaged credentials")
 	}
-	if strings.Contains(stdout.String(), credentials["research-agent"]) {
+	if strings.Contains(stdout.String(), credentials["research-agent"].Token) {
 		t.Fatal("printed agent token")
 	}
-	if err := addIdentity(path, "research-agent"); err == nil {
+	if err := addIdentity(path, "research-agent", store.RoleAgent); err == nil {
 		t.Fatal("replaced existing identity")
 	}
-	if err := addIdentity(path, "../bad"); err == nil {
+	if err := addIdentity(path, "../bad", store.RoleAgent); err == nil {
 		t.Fatal("accepted invalid identity")
 	}
 	if err := os.Chmod(path, 0644); err != nil {
@@ -159,7 +159,7 @@ func TestListFiltersAndCredentialSelection(t *testing.T) {
 	if err := initCredentials(path); err != nil {
 		t.Fatal(err)
 	}
-	if err := addIdentity(path, "worker"); err != nil {
+	if err := addIdentity(path, "worker", store.RoleAgent); err != nil {
 		t.Fatal(err)
 	}
 	credentials, err := loadCredentials(path)
@@ -167,7 +167,7 @@ func TestListFiltersAndCredentialSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer "+credentials["worker"] {
+		if r.Header.Get("Authorization") != "Bearer "+credentials["worker"].Token {
 			t.Error("wrong selected identity")
 		}
 		q := r.URL.Query()
@@ -262,10 +262,13 @@ func TestFreshAgentCLIWorkflowAndRetry(t *testing.T) {
 	}
 	defer db.Close()
 	ownerToken, agentToken := strings.Repeat("o", 64), strings.Repeat("a", 64)
-	server := httptest.NewServer(api.NewHandler(db, map[string]string{"owner": ownerToken, "agent": agentToken}))
+	server := httptest.NewServer(api.NewHandler(db, []api.Identity{
+		{Name: "owner", Token: ownerToken, Role: store.RoleReviewer},
+		{Name: "agent", Token: agentToken, Role: store.RoleAgent},
+	}))
 	defer server.Close()
 	t.Setenv("HERMA_URL", server.URL)
-	t.Setenv("HERMA_TOKEN", ownerToken)
+	t.Setenv("HERMA_TOKEN", agentToken)
 	runCommand := func(args ...string) []byte {
 		t.Helper()
 		var stdout, stderr bytes.Buffer
@@ -278,11 +281,16 @@ func TestFreshAgentCLIWorkflowAndRetry(t *testing.T) {
 	if err := json.Unmarshal(runCommand("create", "--kind", "project", "--title", "Persistent memory"), &project); err != nil {
 		t.Fatal(err)
 	}
-	runCommand("create", "--kind", "knowledge", "--title", "Use Go", "--body", "The knowledge service will be implemented in Go.", "--project", project.ID, "--status", "accepted")
+	// Reviewer tokens are refused over TCP; write the reviewed record directly.
+	if _, _, err := db.Create(context.Background(), store.Author{Name: "owner", Role: store.RoleReviewer}, "", store.CreateInput{
+		Kind: "knowledge", Title: "Use Go", Body: "The knowledge service will be implemented in Go.",
+		ProjectID: project.ID, Status: "accepted", Sources: []string{"https://example.com/review"},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := json.Unmarshal(runCommand("create", "--kind", "task", "--title", "Continue implementation", "--project", project.ID, "--owner", "agent"), &task); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HERMA_TOKEN", agentToken)
 	var contextResult struct {
 		Tasks     []store.Record `json:"tasks"`
 		Knowledge []store.Record `json:"knowledge"`

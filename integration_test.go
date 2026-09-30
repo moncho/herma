@@ -20,13 +20,17 @@ import (
 )
 
 const (
-	tokenA = "integration-secret-for-session-a"
-	tokenB = "integration-secret-for-session-b"
+	tokenA        = "integration-secret-for-session-a"
+	tokenB        = "integration-secret-for-session-b"
+	tokenReviewer = "integration-secret-for-the-reviewer"
 )
 
 type integrationServer struct {
 	server *httptest.Server
-	close  func()
+	// Serves Handler.Socket over TCP to stand in for the Unix socket listener;
+	// the real socket is exercised by the CLI end-to-end test.
+	reviewer *httptest.Server
+	close    func()
 }
 
 func startIntegrationServer(t *testing.T, path string) *integrationServer {
@@ -35,15 +39,19 @@ func startIntegrationServer(t *testing.T, path string) *integrationServer {
 	if err != nil {
 		t.Fatalf("open knowledge store: %v", err)
 	}
-	server := httptest.NewServer(api.NewHandler(db, map[string]string{
-		"session-a": tokenA,
-		"session-b": tokenB,
-	}))
+	handler := api.NewHandler(db, []api.Identity{
+		{Name: "session-a", Token: tokenA, Role: store.RoleAgent},
+		{Name: "session-b", Token: tokenB, Role: store.RoleAgent},
+		{Name: "reviewer", Token: tokenReviewer, Role: store.RoleReviewer},
+	})
+	server := httptest.NewServer(handler)
+	reviewer := httptest.NewServer(handler.Socket())
 	var once sync.Once
-	result := &integrationServer{server: server}
+	result := &integrationServer{server: server, reviewer: reviewer}
 	result.close = func() {
 		once.Do(func() {
 			server.Close()
+			reviewer.Close()
 			if err := db.Close(); err != nil {
 				t.Errorf("close knowledge store: %v", err)
 			}
@@ -62,7 +70,11 @@ func (s *integrationServer) request(method, path, token, key string, input any) 
 		}
 		body = bytes.NewReader(encoded)
 	}
-	req, err := http.NewRequest(method, s.server.URL+path, body)
+	target := s.server
+	if token == tokenReviewer {
+		target = s.reviewer
+	}
+	req, err := http.NewRequest(method, target.URL+path, body)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -75,7 +87,7 @@ func (s *integrationServer) request(method, path, token, key string, input any) 
 	if input != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	response, err := s.server.Client().Do(req)
+	response, err := target.Client().Do(req)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -103,6 +115,11 @@ func integrationRequest[T any](t *testing.T, s *integrationServer, method, path,
 func createRecord(t *testing.T, s *integrationServer, input store.CreateInput) store.Record {
 	t.Helper()
 	return integrationRequest[store.Record](t, s, http.MethodPost, "/v1/records", tokenA, "", input, http.StatusCreated)
+}
+
+func createReviewed(t *testing.T, s *integrationServer, input store.CreateInput) store.Record {
+	t.Helper()
+	return integrationRequest[store.Record](t, s, http.MethodPost, "/v1/records", tokenReviewer, "", input, http.StatusCreated)
 }
 
 func recordPath(record store.Record) string { return "/v1/records/" + url.PathEscape(record.ID) }
@@ -149,7 +166,7 @@ func TestSharedKnowledgeSurvivesRestartAndConcurrentUpdates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "knowledge.sqlite")
 	first := startIntegrationServer(t, path)
 	project := createRecord(t, first, store.CreateInput{Kind: "project", Title: "Shared project", Body: "Build a durable project memory."})
-	decision := createRecord(t, first, store.CreateInput{
+	decision := createReviewed(t, first, store.CreateInput{
 		Kind: "knowledge", Title: "Keep the source of each decision", Body: "Every durable decision includes its original source.",
 		ProjectID: project.ID, Status: "accepted", Sources: []string{"https://example.org/decisions/source-attribution"},
 	})
@@ -190,7 +207,7 @@ func TestSharedKnowledgeSurvivesRestartAndConcurrentUpdates(t *testing.T) {
 		}
 	}
 	decisionHistory := integrationRequest[historyResponse](t, second, http.MethodGet, recordPath(decision)+"/history", tokenB, "", nil, http.StatusOK)
-	if len(decisionHistory.Items) != 1 || decisionHistory.Items[0].Actor != "session-a" || len(decisionHistory.Items[0].Record.Sources) != 1 || decisionHistory.Items[0].Record.Sources[0] != decision.Sources[0] {
+	if len(decisionHistory.Items) != 1 || decisionHistory.Items[0].Actor != "reviewer" || len(decisionHistory.Items[0].Record.Sources) != 1 || decisionHistory.Items[0].Record.Sources[0] != decision.Sources[0] {
 		t.Errorf("decision provenance did not survive restart: %+v", decisionHistory)
 	}
 
@@ -263,15 +280,15 @@ func TestProjectContextIsolationAndPortableExport(t *testing.T) {
 	s := startIntegrationServer(t, filepath.Join(t.TempDir(), "knowledge.sqlite"))
 	project := createRecord(t, s, store.CreateInput{Kind: "project", Title: "Relevant project"})
 	otherProject := createRecord(t, s, store.CreateInput{Kind: "project", Title: "Other project"})
-	globalPrinciple := createRecord(t, s, store.CreateInput{Kind: "principle", Title: "Global accepted principle", Status: "accepted"})
-	localPrinciple := createRecord(t, s, store.CreateInput{Kind: "principle", Title: "Local accepted principle", ProjectID: project.ID, Status: "accepted"})
-	globalKnowledge := createRecord(t, s, store.CreateInput{Kind: "knowledge", Title: "Global accepted knowledge", Status: "accepted"})
-	localKnowledge := createRecord(t, s, store.CreateInput{Kind: "knowledge", Title: "Local accepted knowledge", ProjectID: project.ID, Status: "accepted", Sources: []string{"https://example.org/research"}})
+	globalPrinciple := createReviewed(t, s, store.CreateInput{Kind: "principle", Title: "Global accepted principle", Status: "accepted", Sources: []string{"https://example.com/review"}})
+	localPrinciple := createReviewed(t, s, store.CreateInput{Kind: "principle", Title: "Local accepted principle", ProjectID: project.ID, Status: "accepted", Sources: []string{"https://example.com/review"}})
+	globalKnowledge := createReviewed(t, s, store.CreateInput{Kind: "knowledge", Title: "Global accepted knowledge", Status: "accepted", Sources: []string{"https://example.com/review"}})
+	localKnowledge := createReviewed(t, s, store.CreateInput{Kind: "knowledge", Title: "Local accepted knowledge", ProjectID: project.ID, Status: "accepted", Sources: []string{"https://example.org/research"}})
 	createRecord(t, s, store.CreateInput{Kind: "knowledge", Title: "Unaccepted hypothesis", ProjectID: project.ID, Status: "proposed"})
 	createRecord(t, s, store.CreateInput{Kind: "principle", Title: "Unaccepted principle", ProjectID: project.ID, Status: "proposed"})
-	createRecord(t, s, store.CreateInput{Kind: "knowledge", Title: "Other project's knowledge", ProjectID: otherProject.ID, Status: "accepted"})
-	archived := createRecord(t, s, store.CreateInput{Kind: "knowledge", Title: "Archived knowledge", ProjectID: project.ID, Status: "accepted"})
-	archived = integrationRequest[store.Record](t, s, http.MethodPatch, recordPath(archived), tokenB, "", store.UpdateInput{Version: archived.Version, Archived: pointer(true)}, http.StatusOK)
+	createReviewed(t, s, store.CreateInput{Kind: "knowledge", Title: "Other project's knowledge", ProjectID: otherProject.ID, Status: "accepted", Sources: []string{"https://example.com/review"}})
+	archived := createReviewed(t, s, store.CreateInput{Kind: "knowledge", Title: "Archived knowledge", ProjectID: project.ID, Status: "accepted", Sources: []string{"https://example.com/review"}})
+	archived = integrationRequest[store.Record](t, s, http.MethodPatch, recordPath(archived), tokenReviewer, "", store.UpdateInput{Version: archived.Version, Archived: pointer(true)}, http.StatusOK)
 	task := createRecord(t, s, store.CreateInput{Kind: "task", Title: "Pending local work", ProjectID: project.ID})
 	createRecord(t, s, store.CreateInput{Kind: "task", Title: "Completed local work", ProjectID: project.ID, Status: "done"})
 	createRecord(t, s, store.CreateInput{Kind: "task", Title: "Other project's work", ProjectID: otherProject.ID})
@@ -296,7 +313,7 @@ func TestProjectContextIsolationAndPortableExport(t *testing.T) {
 	if err != nil || status != http.StatusOK {
 		t.Fatalf("export: status = %d, error = %v, body = %s", status, err, data)
 	}
-	for _, token := range []string{tokenA, tokenB} {
+	for _, token := range []string{tokenA, tokenB, tokenReviewer} {
 		if bytes.Contains(data, []byte(token)) {
 			t.Error("export contains a bearer credential")
 		}
@@ -329,12 +346,8 @@ func TestProjectContextIsolationAndPortableExport(t *testing.T) {
 		t.Errorf("export omitted archived record or its revisions: %+v", exported.History[archived.ID])
 	}
 	for _, revision := range exported.History[archived.ID] {
-		wantActor := "session-a"
-		if revision.Version == 2 {
-			wantActor = "session-b"
-		}
-		if revision.Actor != wantActor {
-			t.Errorf("export revision actor = %q, want %q", revision.Actor, wantActor)
+		if revision.Actor != "reviewer" {
+			t.Errorf("export revision actor = %q, want reviewer", revision.Actor)
 		}
 	}
 }
@@ -385,9 +398,9 @@ func TestProjectContextReportsByteBudgetOmissions(t *testing.T) {
 	s := startIntegrationServer(t, filepath.Join(t.TempDir(), "knowledge.sqlite"))
 	project := createRecord(t, s, store.CreateInput{Kind: "project", Title: "Large project"})
 	for index := range 101 {
-		createRecord(t, s, store.CreateInput{
+		createReviewed(t, s, store.CreateInput{
 			Kind: "knowledge", Title: fmt.Sprintf("Accepted fact %03d", index),
-			ProjectID: project.ID, Status: "accepted",
+			ProjectID: project.ID, Status: "accepted", Sources: []string{"https://example.com/review"},
 		})
 	}
 	task := createRecord(t, s, store.CreateInput{Kind: "task", Title: "A task still fits in context", ProjectID: project.ID})

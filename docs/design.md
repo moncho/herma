@@ -20,10 +20,11 @@ validation, references, search and all transactional writes.
 merges client hook configurations while preserving other settings.
 
 The product scope is coordination between concurrent sessions and handoffs to
-their successors. Durable knowledge stays in memory files/wiki, and Linear owns
-real tasks. Existing task records describe temporary session working intent,
-ownership and blockers with source links; notes describe handoffs. Legacy
-knowledge/principle records remain readable but are not automatically loaded.
+their successors, plus reviewed durable knowledge. Agents propose knowledge and
+principle records and the reviewer accepts them; Linear owns real tasks. Task
+records describe temporary session working intent, ownership and blockers with
+source links; notes describe handoffs. Knowledge and principle records are not
+automatically loaded into session context.
 
 ## Data and concurrency
 
@@ -40,19 +41,30 @@ unlocking. Slow uploads or downloads therefore cannot hold that lock. This
 guarantee assumes one service process owns the file. Source references are intentionally distinct from the
 authenticated identity and cannot override authorship.
 
-The schema is versioned with SQLite's `user_version`. Opening a database
-applies any pending migrations in order, each in its own transaction with its
-version bump, so a failed step leaves the previous version intact. A database
-written by a newer herma is refused rather than modified. Search rows are keyed by
-an FTS rowid stored on each record, so writes update one index row directly.
+Search rows are keyed by an FTS rowid stored on each record, so writes update
+one index row directly.
 
 Versioned edits prevent lost updates. They are not task leases, distributed
 locks, or guarantees about what an agent does outside the service.
 
+## Roles and review
+
+Permissions are split by what each check needs. The API refuses every write from
+a read-only token before reading the body, and refuses reviewer tokens unless the
+request arrived on the Unix socket. The store receives the author's name and role
+and enforces the durable-record rules inside the write transaction, next to the
+version check: agents create knowledge and principles only as proposed and cannot
+change them once judged, and accepting requires a source. A reviewer's judgement
+sets `reviewed_by` and `reviewed_at`.
+
+`herma serve` runs one handler on two listeners: loopback TCP for everyone and a
+private Unix socket that marks its requests. Credentials reload on `SIGHUP` or
+when the file changes; an invalid file keeps the previous identities.
+
 ## Deliberate first-version limits
 
 - Six validated record kinds, with no arbitrary schema creation.
-- One shared trust domain; identities distinguish authors, not permissions.
+- One reviewer; roles separate the reviewer from agents and read-only sessions.
 - Plain-text full-text search and structured filters; no embeddings or model
   calls are required. The tokenizer does not segment Chinese or Japanese runs
   into linguistic words, and search does not provide arbitrary substring matches.

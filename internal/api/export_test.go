@@ -16,7 +16,7 @@ import (
 
 func TestExportDeclaresCompleteResponseLength(t *testing.T) {
 	h, s := apiTestHandler(t, nil)
-	r, _, err := s.Create(context.Background(), "writer", "", store.CreateInput{Kind: "knowledge", Title: "A decision", Body: "Keep the source."})
+	r, _, err := s.Create(context.Background(), store.Author{Name: "writer", Role: store.RoleReviewer}, "", store.CreateInput{Kind: "knowledge", Title: "A decision", Body: "Keep the source."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestOversizedExportReturnsErrorBeforeAnySuccessBody(t *testing.T) {
 	// Current records plus their first revisions exceed 16 MiB. Exercise the
 	// actual public endpoint, rather than weakening its limit for the test.
 	for i := 0; i < 129; i++ {
-		if _, _, err := s.Create(context.Background(), "writer", "", store.CreateInput{Kind: "knowledge", Title: fmt.Sprintf("Decision %d", i), Body: body}); err != nil {
+		if _, _, err := s.Create(context.Background(), store.Author{Name: "writer", Role: store.RoleReviewer}, "", store.CreateInput{Kind: "knowledge", Title: fmt.Sprintf("Decision %d", i), Body: body}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -80,12 +80,12 @@ func TestExportIncludesEveryPageOfRecords(t *testing.T) {
 	ctx := context.Background()
 	const count = 401 // two full export pages and a partial one
 	for i := 0; i < count; i++ {
-		r, _, err := s.Create(ctx, "writer", "", store.CreateInput{Kind: "task", Title: fmt.Sprintf("Task %d", i)})
+		r, _, err := s.Create(ctx, store.Author{Name: "writer", Role: store.RoleReviewer}, "", store.CreateInput{Kind: "task", Title: fmt.Sprintf("Task %d", i)})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if i == 0 {
-			if _, _, err := s.Update(ctx, r.ID, "writer", "", store.UpdateInput{Version: 1, Archived: pointerTo(true)}); err != nil {
+			if _, _, err := s.Update(ctx, r.ID, store.Author{Name: "writer", Role: store.RoleReviewer}, "", store.UpdateInput{Version: 1, Archived: pointerTo(true)}); err != nil {
 				t.Fatal(err)
 			}
 		}

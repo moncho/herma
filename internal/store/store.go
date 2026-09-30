@@ -145,8 +145,8 @@ func migrate(db *sql.DB) error {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-func (s *Store) Create(ctx context.Context, actor, key string, input CreateInput) (Record, bool, error) {
-	if err := validateIdentity(actor, key); err != nil {
+func (s *Store) Create(ctx context.Context, author Author, key string, input CreateInput) (Record, bool, error) {
+	if err := validateAuthor(author, key); err != nil {
 		return Record{}, false, err
 	}
 	fingerprint, err := requestFingerprint("create", "", input)
@@ -158,19 +158,22 @@ func (s *Store) Create(ctx context.Context, actor, key string, input CreateInput
 		return Record{}, false, err
 	}
 	defer tx.Rollback()
-	if record, replay, err := replayRecord(ctx, tx, actor, key, fingerprint); replay || err != nil {
+	if record, replay, err := replayRecord(ctx, tx, author.Name, key, fingerprint); replay || err != nil {
 		return record, replay, err
 	}
 	r := Record{
 		Kind: input.Kind, Title: input.Title, Body: input.Body, ProjectID: input.ProjectID,
 		Status: input.Status, Priority: input.Priority, Owner: input.Owner,
 		Tags: input.Tags, Links: input.Links, Sources: input.Sources,
-		CreatedBy: actor, UpdatedBy: actor, Version: 1,
+		CreatedBy: author.Name, UpdatedBy: author.Name, Version: 1,
 	}
 	if r.Status == "" {
 		r.Status = defaultStatus[r.Kind]
 	}
 	if err := normalizeRecord(&r); err != nil {
+		return Record{}, false, err
+	}
+	if err := authorizeCreate(author, r); err != nil {
 		return Record{}, false, err
 	}
 	if err := validateReferences(ctx, tx, r, ""); err != nil {
@@ -183,7 +186,8 @@ func (s *Store) Create(ctx context.Context, actor, key string, input CreateInput
 	r.ID = "rec_" + hex.EncodeToString(randomID)
 	r.CreatedAt = time.Now().UTC()
 	r.UpdatedAt = r.CreatedAt
-	if err := saveRecord(ctx, tx, r, "created", actor, key, fingerprint); err != nil {
+	markReview(author, "proposed", &r, r.CreatedAt)
+	if err := saveRecord(ctx, tx, r, "created", author.Name, key, fingerprint); err != nil {
 		return Record{}, false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -192,8 +196,8 @@ func (s *Store) Create(ctx context.Context, actor, key string, input CreateInput
 	return r, false, nil
 }
 
-func (s *Store) Update(ctx context.Context, id, actor, key string, input UpdateInput) (Record, bool, error) {
-	if err := validateIdentity(actor, key); err != nil {
+func (s *Store) Update(ctx context.Context, id string, author Author, key string, input UpdateInput) (Record, bool, error) {
+	if err := validateAuthor(author, key); err != nil {
 		return Record{}, false, err
 	}
 	fingerprint, err := requestFingerprint("update", id, input)
@@ -205,7 +209,7 @@ func (s *Store) Update(ctx context.Context, id, actor, key string, input UpdateI
 		return Record{}, false, err
 	}
 	defer tx.Rollback()
-	if record, replay, err := replayRecord(ctx, tx, actor, key, fingerprint); replay || err != nil {
+	if record, replay, err := replayRecord(ctx, tx, author.Name, key, fingerprint); replay || err != nil {
 		return record, replay, err
 	}
 	if input.Version <= 0 {
@@ -224,6 +228,7 @@ func (s *Store) Update(ctx context.Context, id, actor, key string, input UpdateI
 	if r.Kind == "note" && hasContentChanges(input) {
 		return Record{}, false, invalid("notes are append-only; only archived may be changed")
 	}
+	old := r
 	oldProject := r.ProjectID
 	if input.Title != nil {
 		r.Title = *input.Title
@@ -258,13 +263,17 @@ func (s *Store) Update(ctx context.Context, id, actor, key string, input UpdateI
 	if err := normalizeRecord(&r); err != nil {
 		return Record{}, false, err
 	}
+	if err := authorizeUpdate(author, old, r); err != nil {
+		return Record{}, false, err
+	}
 	if err := validateReferences(ctx, tx, r, oldProject); err != nil {
 		return Record{}, false, err
 	}
 	r.Version++
-	r.UpdatedBy = actor
+	r.UpdatedBy = author.Name
 	r.UpdatedAt = time.Now().UTC()
-	if err := saveRecord(ctx, tx, r, "updated", actor, key, fingerprint); err != nil {
+	markReview(author, old.Status, &r, r.UpdatedAt)
+	if err := saveRecord(ctx, tx, r, "updated", author.Name, key, fingerprint); err != nil {
 		return Record{}, false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -496,8 +505,8 @@ var defaultStatus = map[string]string{
 }
 
 var statuses = map[string][]string{
-	"knowledge": {"proposed", "accepted", "superseded"},
-	"principle": {"proposed", "accepted", "superseded"},
+	"knowledge": {"proposed", "accepted", "rejected", "superseded"},
+	"principle": {"proposed", "accepted", "rejected", "superseded"},
 	"project":   {"planned", "active", "paused", "completed"},
 	"task":      {"open", "in_progress", "blocked", "done"},
 	"note":      {"published"},
@@ -506,14 +515,61 @@ var statuses = map[string][]string{
 
 func invalid(message string) error { return &ValidationError{Message: message} }
 
-func validateIdentity(actor, key string) error {
+func forbidden(message string) error { return fmt.Errorf("%w: %s", ErrForbidden, message) }
+
+func validateAuthor(author Author, key string) error {
+	actor := author.Name
 	if strings.TrimSpace(actor) == "" || len(actor) > 200 || !utf8.ValidString(actor) {
 		return invalid("actor must be nonblank and at most 200 bytes")
+	}
+	if !author.Role.Valid() {
+		return invalid("author role must be reviewer, agent, or read-only")
+	}
+	if author.Role == RoleReadOnly {
+		return forbidden("read-only identities cannot write")
 	}
 	if len(key) > 200 || !utf8.ValidString(key) || (key != "" && strings.TrimSpace(key) == "") {
 		return invalid("idempotency key must be nonblank and at most 200 bytes when supplied")
 	}
 	return nil
+}
+
+// durable kinds hold knowledge meant to outlive sessions and need review.
+func durable(kind string) bool { return kind == "knowledge" || kind == "principle" }
+
+func authorizeCreate(author Author, r Record) error {
+	if !durable(r.Kind) || author.Role == RoleReviewer || r.Status == "proposed" {
+		return nil
+	}
+	return forbidden(fmt.Sprintf("only a reviewer can create %s with status %s", r.Kind, r.Status))
+}
+
+// authorizeUpdate runs inside the write transaction against the committed
+// record, so a concurrent status change cannot slip past it.
+func authorizeUpdate(author Author, old, next Record) error {
+	if !durable(old.Kind) || author.Role == RoleReviewer {
+		return nil
+	}
+	if old.Status != "proposed" {
+		return forbidden(fmt.Sprintf("only a reviewer can change %s %s", old.Status, old.Kind))
+	}
+	if next.Status != old.Status {
+		return forbidden(fmt.Sprintf("only a reviewer can change the status of %s", old.Kind))
+	}
+	return nil
+}
+
+// markReview records who last judged a durable record. Only reviewers can
+// reach a status other than proposed, so author is a reviewer when it applies.
+func markReview(author Author, previousStatus string, r *Record, at time.Time) {
+	if !durable(r.Kind) || r.Status == previousStatus {
+		return
+	}
+	if r.Status == "proposed" {
+		r.ReviewedBy, r.ReviewedAt = "", nil
+		return
+	}
+	r.ReviewedBy, r.ReviewedAt = author.Name, &at
 }
 
 func validStatus(kind, status string) bool {
@@ -566,6 +622,9 @@ func normalizeRecord(r *Record) error {
 	}
 	if r.Sources, err = normalizeStrings(r.Sources, "sources", 50, 2048, false); err != nil {
 		return err
+	}
+	if durable(r.Kind) && r.Status == "accepted" && len(r.Sources) == 0 {
+		return invalid(fmt.Sprintf("accepted %s requires at least one source", r.Kind))
 	}
 	return nil
 }

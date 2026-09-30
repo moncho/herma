@@ -13,6 +13,7 @@ import (
 
 	"github.com/moncho/herma/internal/hooks"
 	"github.com/moncho/herma/internal/project"
+	"github.com/moncho/herma/internal/store"
 )
 
 const hookTimeout = 5 * time.Second
@@ -59,6 +60,15 @@ func installHook(cfg config, args []string, stdout, stderr io.Writer) error {
 	if _, err := cfg.client(); err != nil {
 		return err
 	}
+	if os.Getenv("HERMA_TOKEN") == "" {
+		role, err := cfg.identityRole()
+		if err != nil {
+			return err
+		}
+		if role == store.RoleReviewer {
+			return fmt.Errorf("hook install refuses reviewer identity %q: session hooks run inside agent sessions. Use an agent identity, for example --identity local-agent", cfg.identity)
+		}
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		return err
@@ -83,10 +93,19 @@ func installHook(cfg config, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return output(stdout, map[string]any{
+	result := map[string]any{
 		"installed": installations,
 		"message":   "Start a new session. In Codex, review and trust this hook through /hooks first. Token-based hooks require HERMA_TOKEN in the agent environment.",
-	})
+	}
+	if os.Getenv("HERMA_TOKEN") == "" {
+		credentials, err := filepath.Abs(cfg.credentials)
+		if err != nil {
+			return err
+		}
+		// Claude Code writes absolute paths in permission rules with a leading //.
+		result["permission_advice"] = "Keep agents from reading the reviewer token: in Claude Code, add \"Read(/" + credentials + ")\" to permissions.deny; in Codex, keep the credentials outside the writable workspace."
+	}
+	return output(stdout, result)
 }
 
 // A missing binding is a quiet no-op. Other failures are visible warnings but
@@ -112,6 +131,11 @@ func sessionStart(ctx context.Context, cfg config, requireToken bool, stdin io.R
 	}
 	if requireToken && os.Getenv("HERMA_TOKEN") == "" {
 		return hookWarning(stdout, "herma context unavailable: this hook requires HERMA_TOKEN in the agent environment; credential-file fallback is disabled.")
+	}
+	if os.Getenv("HERMA_TOKEN") == "" {
+		if role, err := cfg.identityRole(); err == nil && role == store.RoleReviewer {
+			return hookWarning(stdout, "herma context unavailable: this hook uses the reviewer identity. Reinstall it with an agent identity: herma --identity local-agent hook install --client claude|codex|both. Session startup will continue.")
+		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, hookTimeout)
 	defer cancel()

@@ -27,6 +27,8 @@ type contextRecord struct {
 	UpdatedAt       *time.Time `json:"updated_at,omitempty"`
 	Sources         []string   `json:"sources,omitempty"`
 	Links           []string   `json:"links,omitempty"`
+	ReviewedBy      string     `json:"reviewed_by,omitempty"`
+	ReviewedAt      *time.Time `json:"reviewed_at,omitempty"`
 	BodyTruncated   bool       `json:"body_truncated,omitempty"`
 	TruncatedFields []string   `json:"truncated_fields,omitempty"`
 }
@@ -155,6 +157,7 @@ func fitContextRecord(record store.Record, budget int) (contextRecord, bool) {
 		Status: record.Status, Version: record.Version, Priority: record.Priority,
 		ProjectID: record.ProjectID, Owner: record.Owner, UpdatedBy: record.UpdatedBy,
 		UpdatedAt: &record.UpdatedAt, Sources: record.Sources, Links: record.Links,
+		ReviewedBy: record.ReviewedBy, ReviewedAt: record.ReviewedAt,
 	}
 	if contextRecordSize(out) <= budget {
 		return out, true
@@ -179,7 +182,7 @@ func fitContextRecord(record store.Record, budget int) (contextRecord, bool) {
 			markContextField(&out, "title")
 		}
 	}
-	for _, field := range []string{"sources", "links", "owner", "updated_by", "project_id", "priority", "updated_at"} {
+	for _, field := range []string{"sources", "links", "owner", "updated_by", "project_id", "priority", "updated_at", "reviewed_by", "reviewed_at"} {
 		if contextRecordSize(out) <= metadataBudget {
 			break
 		}
@@ -216,6 +219,16 @@ func fitContextRecord(record store.Record, budget int) (contextRecord, bool) {
 			out.Priority = 0
 		case "updated_at":
 			out.UpdatedAt = nil
+		case "reviewed_by":
+			if out.ReviewedBy == "" {
+				continue
+			}
+			out.ReviewedBy = ""
+		case "reviewed_at":
+			if out.ReviewedAt == nil {
+				continue
+			}
+			out.ReviewedAt = nil
 		}
 		markContextField(&out, field)
 	}

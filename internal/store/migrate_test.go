@@ -126,7 +126,7 @@ func TestOpenUpgradesLegacyDatabaseAndKeepsSearchInSync(t *testing.T) {
 			t.Fatalf("search %q after upgrade = %d, want %d", query, got, want)
 		}
 	}
-	if _, _, err := s.Update(ctx, first.ID, "agent-b", "", UpdateInput{Version: 1, Title: pointer("Renamed coordination")}); err != nil {
+	if _, _, err := s.Update(ctx, first.ID, reviewer("agent-b"), "", UpdateInput{Version: 1, Title: pointer("Renamed coordination")}); err != nil {
 		t.Fatal(err)
 	}
 	created := createRecord(t, s, CreateInput{Kind: "task", Title: "Fresh coordination"})
@@ -228,7 +228,7 @@ func TestReceiptDoesNotDuplicateRecordBody(t *testing.T) {
 	ctx := context.Background()
 	body := strings.Repeat("large handoff body ", 3000)
 	input := CreateInput{Kind: "note", Title: "Large handoff", Body: body}
-	r, _, err := s.Create(ctx, "agent-a", "large-request", input)
+	r, _, err := s.Create(ctx, reviewer("agent-a"), "large-request", input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func TestReceiptDoesNotDuplicateRecordBody(t *testing.T) {
 	if size > 1024 {
 		t.Fatalf("receipt stores %d bytes for a %d-byte body; it should reference the revision", size, len(body))
 	}
-	got, replay, err := s.Create(ctx, "agent-a", "large-request", input)
+	got, replay, err := s.Create(ctx, reviewer("agent-a"), "large-request", input)
 	if err != nil || !replay || !reflect.DeepEqual(got, r) {
 		t.Fatalf("replay after compact receipt: %t %v", replay, err)
 	}
@@ -322,13 +322,13 @@ func TestOpenUpgradesVersionTwoReceipts(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	got, replay, err := s.Create(ctx, "agent-a", "old-request", input)
+	got, replay, err := s.Create(ctx, reviewer("agent-a"), "old-request", input)
 	if err != nil || !replay || !reflect.DeepEqual(got, r) {
 		t.Fatalf("replay of upgraded receipt: %+v %t %v", got, replay, err)
 	}
 	other := input
 	other.Title = "Different input"
-	if _, _, err := s.Create(ctx, "agent-a", "old-request", other); !errors.Is(err, ErrIdempotency) {
+	if _, _, err := s.Create(ctx, reviewer("agent-a"), "old-request", other); !errors.Is(err, ErrIdempotency) {
 		t.Fatalf("misuse of upgraded receipt: %v", err)
 	}
 }

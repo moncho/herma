@@ -47,20 +47,20 @@ func TestBoundContextAndSessionStartLoadFreshCoordination(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	server := httptest.NewServer(api.NewHandler(db, map[string]string{"worker": "test-token"}))
+	server := httptest.NewServer(api.NewHandler(db, []api.Identity{{Name: "worker", Token: "test-token", Role: store.RoleAgent}}))
 	defer server.Close()
 	t.Setenv("HERMA_URL", server.URL)
 	t.Setenv("HERMA_TOKEN", "test-token")
 	create := func(in store.CreateInput) store.Record {
 		t.Helper()
-		r, _, err := db.Create(context.Background(), "worker", "", in)
+		r, _, err := db.Create(context.Background(), store.Author{Name: "worker", Role: store.RoleReviewer}, "", in)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return r
 	}
 	p := create(store.CreateInput{Kind: "project", Title: "Session coordination"})
-	create(store.CreateInput{Kind: "knowledge", Title: "Durable wiki fact", ProjectID: p.ID, Status: "accepted"})
+	create(store.CreateInput{Kind: "knowledge", Title: "Durable wiki fact", ProjectID: p.ID, Status: "accepted", Sources: []string{"https://example.com/review"}})
 	create(store.CreateInput{Kind: "task", Title: "Session A edits the API", ProjectID: p.ID, Status: "in_progress", Owner: "session-a", Sources: []string{"https://linear.app/example/issue/EX-123"}})
 	note := create(store.CreateInput{Kind: "note", Title: "Latest handoff", Body: strings.Repeat("引き継ぎ🙂", 500), ProjectID: p.ID})
 	root := t.TempDir()
@@ -188,7 +188,7 @@ func TestHookInstallUsesAbsoluteCredentialsWithoutTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	credentials := filepath.Join(t.TempDir(), "credentials.json")
-	if err := os.WriteFile(credentials, []byte(`{"session-a":"do-not-embed-this-token-in-hook-configuration"}`), 0600); err != nil {
+	if err := os.WriteFile(credentials, []byte(`{"owner":{"token":"do-not-embed-this-reviewer-token-in-hooks","role":"reviewer"},"session-a":{"token":"do-not-embed-this-token-in-hook-configuration","role":"agent"}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	runInput(t, context.Background(), "", "--credentials", credentials, "--identity", "session-a", "hook", "install", "--client", "both", "--dir", root)

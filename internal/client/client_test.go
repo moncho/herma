@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -138,5 +140,40 @@ func TestRejectInvalidURLsAndResponses(t *testing.T) {
 		if err == nil {
 			t.Fatal("accepted invalid or oversized response")
 		}
+	}
+}
+
+func TestSocketClientTalksOverUnixSocketAndReportsMissingServer(t *testing.T) {
+	dir, err := os.MkdirTemp("", "herma")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "herma.sock")
+	missing, err := NewSocket(path, "socket-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := missing.Do(context.Background(), http.MethodGet, "/v1/whoami", nil, nil, ""); err == nil || !strings.Contains(err.Error(), "not listening on socket "+path) {
+		t.Fatalf("missing server error: %v", err)
+	}
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer socket-token" {
+			t.Error("socket request lacked its bearer token")
+		}
+		_, _ = w.Write([]byte(`{"listener":"socket"}`))
+	})}
+	go func() { _ = server.Serve(listener) }()
+	defer server.Close()
+	data, err := missing.Do(context.Background(), http.MethodGet, "/v1/whoami", nil, nil, "")
+	if err != nil || string(data) != `{"listener":"socket"}` {
+		t.Fatalf("socket request: %s %v", data, err)
+	}
+	if _, err := NewSocket("relative.sock", "socket-token"); err == nil {
+		t.Fatal("accepted a relative socket path")
 	}
 }

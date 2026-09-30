@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -25,36 +26,91 @@ const maxBody = 128 << 10
 const maxExportBytes = 16 << 20
 const exportBuildTimeout = 20 * time.Second
 
+// Identity is one configured bearer token and the role it grants.
+type Identity struct {
+	Name  string
+	Token string
+	Role  store.Role
+}
+
 type identity struct {
 	actor  string
+	role   store.Role
 	digest [32]byte
 }
 
-type handler struct {
+type Handler struct {
 	store      *store.Store
-	identities []identity
+	identities atomic.Pointer[[]identity]
 	// Aggregated context and exports must not mix revisions from concurrent API
 	// writes. One service process owns the database for this first version.
 	mu sync.RWMutex
 }
 
-// NewHandler copies actor->token credentials. Ambiguous credentials fail closed.
-func NewHandler(s *store.Store, identities map[string]string) http.Handler {
-	h := &handler{store: s}
-	seen := map[[32]byte]bool{}
-	for actor, token := range identities {
-		digest := sha256.Sum256([]byte(token))
-		if strings.TrimSpace(actor) == "" || strings.TrimSpace(token) == "" || seen[digest] {
-			h.identities = nil
-			return h
-		}
-		seen[digest] = true
-		h.identities = append(h.identities, identity{actor: actor, digest: digest})
+// NewHandler copies the configured identities. An invalid set fails closed:
+// every bearer token is refused until SetIdentities receives a valid set.
+func NewHandler(s *store.Store, identities []Identity) *Handler {
+	h := &Handler{store: s}
+	if err := h.SetIdentities(identities); err != nil {
+		h.identities.Store(&[]identity{})
 	}
 	return h
 }
 
-func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// SetIdentities replaces the accepted tokens for new requests. An invalid set
+// is refused and the previous set stays in effect.
+func (h *Handler) SetIdentities(identities []Identity) error {
+	if len(identities) == 0 {
+		return errors.New("at least one identity is required")
+	}
+	next := make([]identity, 0, len(identities))
+	names, digests := map[string]bool{}, map[[32]byte]bool{}
+	for _, configured := range identities {
+		digest := sha256.Sum256([]byte(configured.Token))
+		if strings.TrimSpace(configured.Name) == "" || strings.TrimSpace(configured.Token) == "" || !configured.Role.Valid() || names[configured.Name] || digests[digest] {
+			return errors.New("identities need distinct nonblank names and tokens and a valid role")
+		}
+		names[configured.Name], digests[digest] = true, true
+		next = append(next, identity{actor: configured.Name, role: configured.Role, digest: digest})
+	}
+	h.identities.Store(&next)
+	return nil
+}
+
+type listenerKey struct{}
+
+// Socket returns the handler for the local Unix socket listener. Reviewer
+// tokens are accepted only through it, so a tunnel that forwards TCP cannot
+// carry them.
+func (h *Handler) Socket() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), listenerKey{}, "socket")))
+	})
+}
+
+func listenerName(r *http.Request) string {
+	if name, ok := r.Context().Value(listenerKey{}).(string); ok {
+		return name
+	}
+	return "tcp"
+}
+
+func (h *Handler) authenticate(header string) (identity, bool) {
+	parts := strings.Fields(header)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return identity{}, false
+	}
+	digest := sha256.Sum256([]byte(parts[1]))
+	var found identity
+	for _, item := range *h.identities.Load() {
+		if subtle.ConstantTimeCompare(digest[:], item.digest[:]) == 1 {
+			found = item
+		}
+	}
+	return found, found.actor != ""
+}
+
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -62,12 +118,22 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		return
 	}
-	actor, ok := h.authenticate(r.Header.Get("Authorization"))
+	id, ok := h.authenticate(r.Header.Get("Authorization"))
 	if !ok {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="knowledge-base"`)
 		writeError(w, http.StatusUnauthorized, "unauthorized", "a valid bearer token is required")
 		return
 	}
+	if id.role == store.RoleReviewer && listenerName(r) != "socket" {
+		writeError(w, http.StatusForbidden, "reviewer_requires_socket", "reviewer tokens are accepted only on the local Unix socket; unset HERMA_TOKEN and use the named reviewer identity on the server machine")
+		return
+	}
+	// Refuse read-only writes before reading a possibly large request body.
+	if id.role == store.RoleReadOnly && (r.Method == http.MethodPost || r.Method == http.MethodPatch) {
+		writeError(w, http.StatusForbidden, "forbidden", "read-only identities cannot write")
+		return
+	}
+	author := store.Author{Name: id.actor, Role: id.role}
 	// URL.Query silently drops malformed parameters. Reject them so a broken
 	// project filter can never turn into a broader query.
 	if _, err := url.ParseQuery(r.URL.RawQuery); err != nil {
@@ -78,6 +144,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/v1/schema":
 		if method(w, r, http.MethodGet) {
 			writeJSON(w, http.StatusOK, schemaDocument())
+		}
+	case "/v1/whoami":
+		if method(w, r, http.MethodGet) {
+			writeJSON(w, http.StatusOK, map[string]string{"identity": id.actor, "role": string(id.role), "listener": listenerName(r)})
 		}
 	case "/v1/records":
 		switch r.Method {
@@ -91,7 +161,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// Client-controlled body reads and response writes must never hold
 			// the snapshot lock. Only the committed mutation needs exclusion.
 			h.mu.Lock()
-			record, replay, err := h.store.Create(r.Context(), actor, r.Header.Get("Idempotency-Key"), input)
+			record, replay, err := h.store.Create(r.Context(), author, r.Header.Get("Idempotency-Key"), input)
 			h.mu.Unlock()
 			if err != nil {
 				storeError(w, err)
@@ -119,7 +189,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
 		if len(parts) >= 3 && parts[0] == "v1" && parts[1] == "records" && validID(parts[2]) {
 			if len(parts) == 3 {
-				h.record(w, r, parts[2], actor)
+				h.record(w, r, parts[2], author)
 				return
 			}
 			if len(parts) == 4 && parts[3] == "history" {
@@ -139,22 +209,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *handler) authenticate(header string) (string, bool) {
-	parts := strings.Fields(header)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-		return "", false
-	}
-	digest := sha256.Sum256([]byte(parts[1]))
-	actor := ""
-	for _, item := range h.identities {
-		if subtle.ConstantTimeCompare(digest[:], item.digest[:]) == 1 {
-			actor = item.actor
-		}
-	}
-	return actor, actor != ""
-}
-
-func (h *handler) record(w http.ResponseWriter, r *http.Request, id, actor string) {
+func (h *Handler) record(w http.ResponseWriter, r *http.Request, id string, author store.Author) {
 	switch r.Method {
 	case http.MethodGet:
 		record, err := h.store.Get(r.Context(), id)
@@ -169,7 +224,7 @@ func (h *handler) record(w http.ResponseWriter, r *http.Request, id, actor strin
 			return
 		}
 		h.mu.Lock()
-		record, replay, err := h.store.Update(r.Context(), id, actor, r.Header.Get("Idempotency-Key"), input)
+		record, replay, err := h.store.Update(r.Context(), id, author, r.Header.Get("Idempotency-Key"), input)
 		h.mu.Unlock()
 		if err != nil {
 			storeError(w, err)
@@ -184,7 +239,7 @@ func (h *handler) record(w http.ResponseWriter, r *http.Request, id, actor strin
 	}
 }
 
-func (h *handler) list(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	if err := validateQuery(q, "kind", "project_id", "global", "status", "owner", "tag", "q", "include_archived", "limit", "offset"); err != nil {
 		badRequest(w, err)
@@ -220,7 +275,7 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (h *handler) export(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	if err := validateQuery(r.URL.Query()); err != nil {
 		badRequest(w, err)
 		return
@@ -266,7 +321,7 @@ type exportSnapshot struct {
 	History       map[string][]store.Revision `json:"history"`
 }
 
-func (h *handler) exportSnapshot(ctx context.Context) (exportSnapshot, error) {
+func (h *Handler) exportSnapshot(ctx context.Context) (exportSnapshot, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	result := exportSnapshot{FormatVersion: 1, Records: []store.Record{}, History: map[string][]store.Revision{}}
@@ -446,6 +501,8 @@ func storeError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "version_conflict", "record changed; fetch the latest version, reconcile your edit, and retry")
 	case errors.Is(err, store.ErrIdempotency):
 		writeError(w, http.StatusConflict, "idempotency_conflict", err.Error())
+	case errors.Is(err, store.ErrForbidden):
+		writeError(w, http.StatusForbidden, "forbidden", err.Error())
 	default:
 		writeError(w, http.StatusInternalServerError, "internal_error", "the request could not be completed")
 	}

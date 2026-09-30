@@ -9,11 +9,30 @@ var (
 	ErrNotFound    = errors.New("record not found")
 	ErrConflict    = errors.New("record version changed")
 	ErrIdempotency = errors.New("idempotency key was already used for a different request")
+	ErrForbidden   = errors.New("forbidden")
 )
 
 type ValidationError struct{ Message string }
 
 func (e *ValidationError) Error() string { return e.Message }
+
+// Role limits what an authenticated author may change.
+type Role string
+
+const (
+	RoleReviewer Role = "reviewer"
+	RoleAgent    Role = "agent"
+	RoleReadOnly Role = "read-only"
+)
+
+func (r Role) Valid() bool { return r == RoleReviewer || r == RoleAgent || r == RoleReadOnly }
+
+// Author is the authenticated writer of a change. The API derives both fields
+// from the bearer token; clients cannot supply them.
+type Author struct {
+	Name string
+	Role Role
+}
 
 // Record is a versioned piece of knowledge. Authenticated identities, rather
 // than client-provided attribution, populate CreatedBy and UpdatedBy.
@@ -34,7 +53,10 @@ type Record struct {
 	UpdatedBy string    `json:"updated_by"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-	Version   int64     `json:"version"`
+	// Set by the store when a reviewer judges a durable record; never by clients.
+	ReviewedBy string     `json:"reviewed_by,omitempty"`
+	ReviewedAt *time.Time `json:"reviewed_at,omitempty"`
+	Version    int64      `json:"version"`
 }
 
 type CreateInput struct {

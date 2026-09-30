@@ -14,7 +14,7 @@ import (
 
 const apiTestToken = "api-test-bearer-secret"
 
-func apiTestHandler(t *testing.T, identities map[string]string) (http.Handler, *store.Store) {
+func apiTestHandler(t *testing.T, identities []Identity) (*Handler, *store.Store) {
 	t.Helper()
 	s, err := store.Open(filepath.Join(t.TempDir(), "api.sqlite"))
 	if err != nil {
@@ -26,7 +26,7 @@ func apiTestHandler(t *testing.T, identities map[string]string) (http.Handler, *
 		}
 	})
 	if identities == nil {
-		identities = map[string]string{"authenticated-session": apiTestToken}
+		identities = []Identity{{Name: "authenticated-session", Token: apiTestToken, Role: store.RoleAgent}}
 	}
 	return NewHandler(s, identities), s
 }
@@ -176,11 +176,13 @@ func TestAuthenticationDerivesAttributionFromBearerIdentity(t *testing.T) {
 }
 
 func TestInvalidCredentialConfigurationFailsClosed(t *testing.T) {
-	for name, identities := range map[string]map[string]string{
+	for name, identities := range map[string][]Identity{
 		"empty":           {},
-		"empty actor":     {"": apiTestToken},
-		"empty token":     {"session": ""},
-		"duplicate token": {"session-a": apiTestToken, "session-b": apiTestToken},
+		"empty actor":     {{Name: "", Token: apiTestToken, Role: store.RoleAgent}},
+		"empty token":     {{Name: "session", Token: "", Role: store.RoleAgent}},
+		"duplicate token": {{Name: "session-a", Token: apiTestToken, Role: store.RoleAgent}, {Name: "session-b", Token: apiTestToken, Role: store.RoleAgent}},
+		"duplicate name":  {{Name: "session", Token: apiTestToken, Role: store.RoleAgent}, {Name: "session", Token: "other-secret", Role: store.RoleAgent}},
+		"invalid role":    {{Name: "session", Token: apiTestToken, Role: "admin"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, _ := apiTestHandler(t, identities)

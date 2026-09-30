@@ -11,7 +11,7 @@ func TestSelfLinkRejectedWithoutRecordOrHistoryChanges(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	r := createRecord(t, s, CreateInput{Kind: "knowledge", Title: "Original decision"})
-	_, replay, err := s.Update(ctx, r.ID, "agent-b", "link-update", UpdateInput{
+	_, replay, err := s.Update(ctx, r.ID, reviewer("agent-b"), "link-update", UpdateInput{
 		Version: 1,
 		Title:   pointer("This title must not be saved"),
 		Links:   pointer([]string{r.ID}),
@@ -29,7 +29,7 @@ func TestSelfLinkRejectedWithoutRecordOrHistoryChanges(t *testing.T) {
 		t.Fatalf("rejected self-link changed revision history: %+v, %v", history, err)
 	}
 	other := createRecord(t, s, CreateInput{Kind: "knowledge", Title: "Related decision"})
-	updated, replay, err := s.Update(ctx, r.ID, "agent-b", "link-update", UpdateInput{
+	updated, replay, err := s.Update(ctx, r.ID, reviewer("agent-b"), "link-update", UpdateInput{
 		Version: 1,
 		Links:   pointer([]string{other.ID}),
 	})
@@ -42,20 +42,20 @@ func TestLinksToArchivedRecordsRemainAllowed(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	target := createRecord(t, s, CreateInput{Kind: "knowledge", Title: "Historical decision"})
-	if _, _, err := s.Update(ctx, target.ID, "agent-a", "", UpdateInput{Version: 1, Archived: pointer(true)}); err != nil {
+	if _, _, err := s.Update(ctx, target.ID, reviewer("agent-a"), "", UpdateInput{Version: 1, Archived: pointer(true)}); err != nil {
 		t.Fatal(err)
 	}
 	created := createRecord(t, s, CreateInput{
 		Kind: "knowledge", Title: "References archived evidence", Links: []string{target.ID},
 	})
-	retained, _, err := s.Update(ctx, created.ID, "agent-b", "", UpdateInput{
+	retained, _, err := s.Update(ctx, created.ID, reviewer("agent-b"), "", UpdateInput{
 		Version: 1, Body: pointer("The archived decision remains relevant evidence."),
 	})
 	if err != nil || !reflect.DeepEqual(retained.Links, []string{target.ID}) {
 		t.Fatalf("could not retain a link to archived evidence: %+v, %v", retained, err)
 	}
 	unlinked := createRecord(t, s, CreateInput{Kind: "knowledge", Title: "Another decision"})
-	linked, _, err := s.Update(ctx, unlinked.ID, "agent-b", "", UpdateInput{
+	linked, _, err := s.Update(ctx, unlinked.ID, reviewer("agent-b"), "", UpdateInput{
 		Version: 1, Links: pointer([]string{target.ID}),
 	})
 	if err != nil || !reflect.DeepEqual(linked.Links, []string{target.ID}) {
