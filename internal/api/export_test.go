@@ -74,3 +74,37 @@ func TestExpiredExportReturnsStructuredTimeout(t *testing.T) {
 		t.Fatalf("missing timeout guidance: %s", w.Body.String())
 	}
 }
+
+func TestExportIncludesEveryPageOfRecords(t *testing.T) {
+	h, s := apiTestHandler(t, nil)
+	ctx := context.Background()
+	const count = 401 // two full export pages and a partial one
+	for i := 0; i < count; i++ {
+		r, _, err := s.Create(ctx, "writer", "", store.CreateInput{Kind: "task", Title: fmt.Sprintf("Task %d", i)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			if _, _, err := s.Update(ctx, r.ID, "writer", "", store.UpdateInput{Version: 1, Archived: pointerTo(true)}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	w := apiTestRequest(h, http.MethodGet, "/v1/export", "", "", "Bearer "+apiTestToken, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var snapshot exportSnapshot
+	if err := json.Unmarshal(w.Body.Bytes(), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, record := range snapshot.Records {
+		seen[record.ID] = true
+	}
+	if len(snapshot.Records) != count || len(seen) != count || len(snapshot.History) != count {
+		t.Fatalf("export has %d records (%d unique) and %d histories, want %d", len(snapshot.Records), len(seen), len(snapshot.History), count)
+	}
+}
+
+func pointerTo[T any](value T) *T { return &value }

@@ -295,3 +295,39 @@ func TestQuoteCommandPassesEveryArgumentLiterally(t *testing.T) {
 		}
 	}
 }
+
+func TestInstallKeepsKeyOrderAndLiteralCharacters(t *testing.T) {
+	dir := t.TempDir()
+	path := writeConfig(t, dir, filepath.Join(".claude", "settings.local.json"), `{
+  "permissions": {"allow": ["Bash(make && go test)"]},
+  "env": {"Z_VAR": "<value>", "A_VAR": "1"},
+  "model": "custom"
+}
+`)
+	if _, err := Install(dir, "claude", commandForTest(t, "owner")); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, literal := range []string{`"Bash(make && go test)"`, `"<value>"`} {
+		if !strings.Contains(text, literal) {
+			t.Fatalf("installed settings escaped %s:\n%s", literal, text)
+		}
+	}
+	order := []string{`"permissions"`, `"env"`, `"Z_VAR"`, `"A_VAR"`, `"model"`, `"hooks"`}
+	previous := -1
+	for _, key := range order {
+		index := strings.Index(text, key)
+		if index <= previous {
+			t.Fatalf("keys were reordered; want %v:\n%s", order, text)
+		}
+		previous = index
+	}
+	results, err := Install(dir, "claude", commandForTest(t, "owner"))
+	if err != nil || len(results) != 1 || results[0].Changed {
+		t.Fatalf("reinstall changed settings: %+v %v", results, err)
+	}
+}

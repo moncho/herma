@@ -248,7 +248,7 @@ func stage(root *os.Root, parent string, data []byte) (string, error) {
 }
 
 func merge(data []byte, client, command string) ([]byte, error) {
-	settings := map[string]any{}
+	settings := newObject()
 	if data != nil {
 		if !utf8.Valid(data) {
 			return nil, errors.New("hook configuration must be valid UTF-8")
@@ -263,21 +263,21 @@ func merge(data []byte, client, command string) ([]byte, error) {
 			return nil, errors.New("configuration must contain exactly one JSON object")
 		}
 		var ok bool
-		settings, ok = value.(map[string]any)
+		settings, ok = value.(*object)
 		if !ok {
 			return nil, errors.New("configuration must be a JSON object")
 		}
 	}
-	hookSettings := map[string]any{}
-	if raw, ok := settings["hooks"]; ok {
+	hookSettings := newObject()
+	if raw, ok := settings.get("hooks"); ok {
 		var valid bool
-		hookSettings, valid = raw.(map[string]any)
+		hookSettings, valid = raw.(*object)
 		if !valid {
 			return nil, errors.New("hooks must be a JSON object")
 		}
 	}
 	groups := []any{}
-	if raw, ok := hookSettings["SessionStart"]; ok {
+	if raw, ok := hookSettings.get("SessionStart"); ok {
 		var valid bool
 		groups, valid = raw.([]any)
 		if !valid {
@@ -293,44 +293,47 @@ func merge(data []byte, client, command string) ([]byte, error) {
 	desired := map[string]any{"hooks": []any{handler}}
 	managed := -1
 	for index, raw := range groups {
-		group, ok := raw.(map[string]any)
+		group, ok := raw.(*object)
 		if !ok {
 			return nil, errors.New("each SessionStart matcher group must be an object")
 		}
-		if m, ok := group["matcher"]; ok {
+		if m, ok := group.get("matcher"); ok {
 			if _, valid := m.(string); !valid {
 				return nil, errors.New("SessionStart matcher must be a string")
 			}
 		}
-		handlers, ok := group["hooks"].([]any)
+		rawHandlers, _ := group.get("hooks")
+		handlers, ok := rawHandlers.([]any)
 		if !ok {
 			return nil, errors.New("each SessionStart matcher group must contain a hooks array")
 		}
 		for _, raw := range handlers {
-			h, ok := raw.(map[string]any)
+			h, ok := raw.(*object)
 			if !ok {
 				return nil, errors.New("each SessionStart handler must be an object")
 			}
-			kind, ok := h["type"].(string)
+			rawKind, _ := h.get("type")
+			kind, ok := rawKind.(string)
 			if !ok || kind == "" {
 				return nil, errors.New("each SessionStart handler must have a string type")
 			}
-			cmd, _ := h["command"].(string)
+			rawCommand, _ := h.get("command")
+			cmd, _ := rawCommand.(string)
 			if kind == "command" && strings.TrimSpace(cmd) == "" {
 				return nil, errors.New("each command handler must have a nonempty command")
 			}
 			if !strings.Contains(cmd, "herma-managed:session-start:") {
 				continue
 			}
-			if !strings.HasSuffix(cmd, marker) || h["type"] != "command" || len(handlers) != 1 || managed >= 0 {
+			if !strings.HasSuffix(cmd, marker) || kind != "command" || len(handlers) != 1 || managed >= 0 {
 				return nil, errors.New("managed herma hook has a conflicting marker or shares a group; separate or remove that entry before reinstalling")
 			}
-			for key := range group {
+			for _, key := range group.keys {
 				if key != "matcher" && key != "hooks" {
 					return nil, errors.New("managed herma matcher group has custom fields; remove its managed marker to preserve it separately")
 				}
 			}
-			for key := range h {
+			for _, key := range h.keys {
 				if key != "type" && key != "command" && key != "timeout" && key != "async" && key != "additionalContextLimit" {
 					return nil, errors.New("managed herma hook has custom fields; remove its managed marker to preserve it separately")
 				}
@@ -343,16 +346,74 @@ func merge(data []byte, client, command string) ([]byte, error) {
 	} else {
 		groups = append(groups, desired)
 	}
-	hookSettings["SessionStart"] = groups
-	settings["hooks"] = hookSettings
-	result, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
+	hookSettings.set("SessionStart", groups)
+	settings.set("hooks", hookSettings)
+	var result bytes.Buffer
+	encoder := json.NewEncoder(&result)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(settings); err != nil {
 		return nil, err
 	}
-	if len(result)+1 > maxConfigBytes {
+	if result.Len() > maxConfigBytes {
 		return nil, errors.New("updated hook configuration would exceed 2 MiB")
 	}
-	return append(result, '\n'), nil
+	return result.Bytes(), nil
+}
+
+// object is a parsed JSON object that keeps its key order, so rewriting a
+// settings file changes only the entries this installer manages.
+type object struct {
+	keys   []string
+	values map[string]any
+}
+
+func newObject() *object { return &object{values: map[string]any{}} }
+
+func (o *object) get(key string) (any, bool) {
+	value, ok := o.values[key]
+	return value, ok
+}
+
+func (o *object) set(key string, value any) {
+	if _, ok := o.values[key]; !ok {
+		o.keys = append(o.keys, key)
+	}
+	o.values[key] = value
+}
+
+func (o *object) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, key := range o.keys {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		for j, value := range []any{key, o.values[key]} {
+			if j > 0 {
+				buf.WriteByte(':')
+			}
+			data, err := marshalLiteral(value)
+			if err != nil {
+				return nil, err
+			}
+			buf.Write(data)
+		}
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
+}
+
+// marshalLiteral keeps <, > and & as written. The top-level encoder cannot
+// undo HTML escaping that a nested MarshalJSON has already applied.
+func marshalLiteral(value any) ([]byte, error) {
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
 
 // Decode without losing large numeric settings or silently dropping duplicate
@@ -367,7 +428,7 @@ func parseJSON(dec *json.Decoder, depth int) (any, error) {
 	}
 	switch token {
 	case json.Delim('{'):
-		value := map[string]any{}
+		value := newObject()
 		for dec.More() {
 			key, err := dec.Token()
 			if err != nil {
@@ -377,14 +438,14 @@ func parseJSON(dec *json.Decoder, depth int) (any, error) {
 			if !ok {
 				return nil, errors.New("JSON object key must be a string")
 			}
-			if _, exists := value[name]; exists {
+			if _, exists := value.get(name); exists {
 				return nil, errors.New("hook configuration contains a duplicate JSON object key")
 			}
 			item, err := parseJSON(dec, depth+1)
 			if err != nil {
 				return nil, err
 			}
-			value[name] = item
+			value.set(name, item)
 		}
 		if _, err := dec.Token(); err != nil {
 			return nil, err
