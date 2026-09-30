@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/moncho/herma/internal/backup"
 	"github.com/moncho/herma/internal/hooks"
 	"github.com/moncho/herma/internal/project"
 	"github.com/moncho/herma/internal/store"
@@ -145,9 +147,39 @@ func sessionStart(ctx context.Context, cfg config, requireToken bool, stdin io.R
 	}
 	// The decoded additionalContext string, including its scope/trust metadata,
 	// stays within the binding's byte budget. JSON escaping is only transport.
-	return output(stdout, map[string]any{"hookSpecificOutput": map[string]string{
+	result := map[string]any{"hookSpecificOutput": map[string]string{
 		"hookEventName": "SessionStart", "additionalContext": string(bytes.TrimSpace(data)),
-	}})
+	}}
+	if warning := backupWarning(ctx, cfg); warning != "" {
+		result["systemMessage"] = warning
+	}
+	return output(stdout, result)
+}
+
+// backupWarning returns a one-line warning when automatic backups are enabled
+// but stale. Any failure to read the status yields no warning, so startup
+// context is never blocked by backup reporting.
+func backupWarning(ctx context.Context, cfg config) string {
+	c, err := cfg.client()
+	if err != nil {
+		return ""
+	}
+	data, err := c.Do(ctx, http.MethodGet, "/v1/backup", nil, nil, "")
+	if err != nil {
+		return ""
+	}
+	var status backup.Status
+	if err := json.Unmarshal(data, &status); err != nil || !status.Enabled || !status.Stale {
+		return ""
+	}
+	message := "herma: backups are enabled but none has succeeded yet"
+	if status.LastSuccess != nil {
+		message = "herma: no successful backup since " + status.LastSuccess.At.UTC().Format("2006-01-02 15:04 UTC")
+	}
+	if status.LastError != nil {
+		message += " (last error: " + status.LastError.Message + ")"
+	}
+	return message
 }
 
 func hookWarning(stdout io.Writer, message string) error {

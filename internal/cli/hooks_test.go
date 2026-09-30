@@ -11,9 +11,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/moncho/herma/internal/api"
+	"github.com/moncho/herma/internal/backup"
 	"github.com/moncho/herma/internal/project"
 	"github.com/moncho/herma/internal/store"
 )
@@ -241,5 +244,94 @@ func TestTokenHookNeverFallsBackToCredentialFile(t *testing.T) {
 	data := runInput(t, context.Background(), hookEvent(t, root), "hook", "session-start", "--require-token")
 	if !bytes.Contains(data, []byte("requires HERMA_TOKEN")) || bytes.Contains(data, []byte("additionalContext")) {
 		t.Fatalf("missing token fell back to a different identity: %s", data)
+	}
+}
+
+type testClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *testClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *testClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
+// sessionStartWithBackups runs the hook against a server whose backup status
+// comes from runner; failStatus makes /v1/backup return 500.
+func sessionStartWithBackups(t *testing.T, runner *backup.Runner, db *store.Store, failStatus bool) map[string]any {
+	t.Helper()
+	handler := api.NewHandler(db, []api.Identity{{Name: "worker", Token: "test-token", Role: store.RoleAgent}})
+	if runner != nil {
+		handler.SetBackupReporter(runner)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if failStatus && r.URL.Path == "/v1/backup" {
+			http.Error(w, "unavailable", http.StatusInternalServerError)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("HERMA_URL", server.URL)
+	t.Setenv("HERMA_TOKEN", "test-token")
+	p, _, err := db.Create(context.Background(), store.Author{Name: "worker", Role: store.RoleAgent}, "", store.CreateInput{Kind: "project", Title: "Backed up"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := project.Bind(root, project.Binding{ProjectID: p.ID}); err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	out := runInput(t, context.Background(), hookEvent(t, root), "hook", "session-start")
+	if err := json.Unmarshal(out, &result); err != nil {
+		t.Fatalf("hook output: %s", out)
+	}
+	if result["hookSpecificOutput"] == nil {
+		t.Fatalf("context missing: %s", out)
+	}
+	return result
+}
+
+func TestSessionStartWarnsOnlyWhenBackupsAreStale(t *testing.T) {
+	cleanEnv(t)
+	db, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	clock := &testClock{now: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)}
+	runner, err := backup.New(db, backup.Config{Dir: t.TempDir(), Every: time.Hour, Keep: 3}, io.Discard, clock.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.Snapshot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if result := sessionStartWithBackups(t, runner, db, false); result["systemMessage"] != nil {
+		t.Fatalf("fresh backups warned: %v", result["systemMessage"])
+	}
+	clock.Advance(3 * time.Hour)
+	result := sessionStartWithBackups(t, runner, db, false)
+	message, _ := result["systemMessage"].(string)
+	if !strings.Contains(message, "no successful backup since 2026-09-30") {
+		t.Fatalf("stale warning: %q", message)
+	}
+	if result := sessionStartWithBackups(t, nil, db, false); result["systemMessage"] != nil {
+		t.Fatalf("disabled backups warned: %v", result["systemMessage"])
+	}
+	if result := sessionStartWithBackups(t, runner, db, true); result["systemMessage"] != nil {
+		t.Fatalf("failed status request warned: %v", result["systemMessage"])
 	}
 }

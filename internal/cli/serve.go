@@ -14,8 +14,13 @@ import (
 	"time"
 
 	"github.com/moncho/herma/internal/api"
+	"github.com/moncho/herma/internal/backup"
 	"github.com/moncho/herma/internal/store"
 )
+
+// minBackupInterval keeps a misconfigured interval from rewriting the backup
+// folder continuously.
+const minBackupInterval = 5 * time.Minute
 
 // maxSocketPath leaves room for the terminator in macOS's 104-byte sun_path.
 const maxSocketPath = 103
@@ -79,8 +84,26 @@ func serve(ctx context.Context, cfg config, args []string, stderr io.Writer) err
 	fs := flags("serve", stderr)
 	dbPath := fs.String("db", ".herma/knowledge.sqlite3", "SQLite database path")
 	listen := fs.String("listen", "127.0.0.1:8765", "HTTP listen address (loopback only)")
+	backupDir := fs.String("backup-dir", "", "write snapshots into this directory (off when empty)")
+	backupEvery := fs.Duration("backup-every", 6*time.Hour, "interval between snapshots (minimum 5m)")
+	backupKeep := fs.Int("backup-keep", 14, "number of snapshots to keep (minimum 1)")
 	if err := parse(fs, args); err != nil {
 		return err
+	}
+	set := supplied(fs)
+	if *backupDir == "" && (set["backup-every"] || set["backup-keep"]) {
+		return errors.New("--backup-every and --backup-keep require --backup-dir")
+	}
+	if *backupDir != "" && *backupEvery < minBackupInterval {
+		return fmt.Errorf("--backup-every must be at least %s", minBackupInterval)
+	}
+	if *backupDir != "" && *backupKeep < 1 {
+		return errors.New("--backup-keep must be at least 1")
+	}
+	if *backupDir != "" {
+		if err := backup.CheckDir(*backupDir); err != nil {
+			return err
+		}
 	}
 	stderr = &lockedWriter{w: stderr}
 	if err := requireLoopback(*listen); err != nil {
@@ -104,6 +127,17 @@ func serve(ctx context.Context, cfg config, args []string, stderr io.Writer) err
 	}
 	defer db.Close()
 	handler := api.NewHandler(db, apiIdentities(identities))
+	var backups *backup.Runner
+	if *backupDir != "" {
+		backups, err = backup.New(db, backup.Config{Dir: *backupDir, Every: *backupEvery, Keep: *backupKeep}, stderr, time.Now)
+		if err != nil {
+			return err
+		}
+		// A failed startup snapshot is logged and reported by status; serving
+		// continues so the next interval can retry.
+		_, _ = backups.Snapshot(ctx)
+		handler.SetBackupReporter(backups)
+	}
 	tcpListener, err := net.Listen("tcp", *listen)
 	if err != nil {
 		if errors.Is(err, syscall.EADDRINUSE) {
@@ -131,6 +165,14 @@ func serve(ctx context.Context, cfg config, args []string, stderr io.Writer) err
 	go watchCredentials(watchCtx, cfg.credentials, credentialsBaseline, credentialsCheckInterval, hup, func(credentials map[string]credential) error {
 		return handler.SetIdentities(apiIdentities(credentials))
 	}, stderr)
+	backupCtx, stopBackups := context.WithCancel(ctx)
+	defer stopBackups()
+	backupsDone := make(chan struct{})
+	if backups != nil {
+		go func() { backups.Run(backupCtx); close(backupsDone) }()
+	} else {
+		close(backupsDone)
+	}
 	shutdown := func() error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -140,6 +182,12 @@ func serve(ctx context.Context, cfg config, args []string, stderr io.Writer) err
 				_ = server.Close()
 				result = fmt.Errorf("shut down server: %w", err)
 			}
+		}
+		stopBackups()
+		<-backupsDone
+		if backups != nil {
+			// The final snapshot captures writes since the last tick.
+			_, _ = backups.Snapshot(context.Background())
 		}
 		return result
 	}

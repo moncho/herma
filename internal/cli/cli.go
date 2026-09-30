@@ -43,7 +43,10 @@ Commands:
                                Add credentials; the role defaults to agent
   identity revoke NAME         Remove an identity; the last reviewer cannot be removed
   whoami                       Show the authenticated identity, role and listener
-  serve [--db PATH] [--listen HOST:PORT]
+  serve [--db PATH] [--listen HOST:PORT] [--backup-dir DIR] [--backup-every 6h] [--backup-keep 14]
+  backup status                Show automatic snapshot status
+  restore SNAPSHOT|DIR [--db PATH] [--replace]
+                               Restore a snapshot with the service stopped
   create --kind KIND --title TITLE [--body TEXT | --body-file PATH] [fields]
   list [--project ID] [--kind KIND] [--q TEXT] [filters]
   get ID
@@ -141,6 +144,10 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			return err
 		}
 		return cfg.request(ctx, stdout, http.MethodGet, "/v1/whoami", nil, nil, "")
+	case "backup":
+		return backupCommand(ctx, cfg, rest, stdout, stderr)
+	case "restore":
+		return restore(cfg, rest, stdout, stderr)
 	case "serve":
 		return serve(ctx, cfg, rest, stderr)
 	case "create":

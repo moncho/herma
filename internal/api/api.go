@@ -19,6 +19,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/moncho/herma/internal/backup"
 	"github.com/moncho/herma/internal/store"
 )
 
@@ -42,6 +43,7 @@ type identity struct {
 type Handler struct {
 	store      *store.Store
 	identities atomic.Pointer[[]identity]
+	backups    BackupReporter
 	// Aggregated context and exports must not mix revisions from concurrent API
 	// writes. One service process owns the database for this first version.
 	mu sync.RWMutex
@@ -77,6 +79,11 @@ func (h *Handler) SetIdentities(identities []Identity) error {
 	return nil
 }
 
+// BackupReporter reports the state of automatic snapshots.
+type BackupReporter interface {
+	Status() backup.Status
+}
+
 type listenerKey struct{}
 
 // Socket returns the handler for the local Unix socket listener. Reviewer
@@ -87,6 +94,9 @@ func (h *Handler) Socket() http.Handler {
 		h.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), listenerKey{}, "socket")))
 	})
 }
+
+// SetBackupReporter enables GET /v1/backup reporting. Call it before serving.
+func (h *Handler) SetBackupReporter(r BackupReporter) { h.backups = r }
 
 func listenerName(r *http.Request) string {
 	if name, ok := r.Context().Value(listenerKey{}).(string); ok {
@@ -148,6 +158,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/v1/whoami":
 		if method(w, r, http.MethodGet) {
 			writeJSON(w, http.StatusOK, map[string]string{"identity": id.actor, "role": string(id.role), "listener": listenerName(r)})
+		}
+	case "/v1/backup":
+		if method(w, r, http.MethodGet) {
+			if h.backups == nil {
+				writeJSON(w, http.StatusOK, map[string]bool{"enabled": false})
+				return
+			}
+			status := h.backups.Status()
+			if !status.Enabled {
+				writeJSON(w, http.StatusOK, map[string]bool{"enabled": false})
+				return
+			}
+			writeJSON(w, http.StatusOK, status)
 		}
 	case "/v1/records":
 		switch r.Method {

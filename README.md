@@ -15,8 +15,9 @@ know, and a reviewed store of knowledge that outlives any single session.
 - **Safe to share across machines.** Agents on other machines connect through a
   tunnel with their own tokens. Your reviewer token works only on a local socket,
   so a copied token can't approve anything.
-- **Small and local.** One Go binary and one SQLite file. No database server,
-  hosted account or model API key.
+- **Small and local, with backups.** One Go binary and one SQLite file. No
+  database server, hosted account or model API key. `herma serve` can snapshot the
+  database into a folder your sync tool already copies off the machine.
 
 Real tasks stay in Linear; herma links to them rather than duplicating them. herma is
 a new, independent project inspired by the
@@ -61,7 +62,7 @@ In another terminal, an agent proposes something and you review it:
 - [Using herma](docs/usage.md): records, roles and review, the CLI, session context
   and search.
 - [Operating herma](docs/operations.md): remote access, what the roles protect
-  against, export and backup.
+  against, backups and restore.
 - [Agent workflow](docs/agent-workflow.md): a session handover pattern.
 - [Design notes](docs/design.md): package structure and current limits.
 
