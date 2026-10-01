@@ -77,6 +77,21 @@ func TestHookInstallRefusesReviewerAndAdvisesPermissions(t *testing.T) {
 	if advice, _ := result["permission_advice"].(string); !strings.Contains(advice, "Read(/"+credentials+")") {
 		t.Fatalf("permission advice: %s %v", data, err)
 	}
+	// Once the reviewer lives in its own file, the agent file needs no rule.
+	if _, err := revokeIdentity(credentials, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	data, err = runCLI(t, "--credentials", credentials, "--identity", "local-agent", "hook", "install", "--client", "claude", "--dir", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result = nil
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatalf("install output: %s %v", data, err)
+	}
+	if _, ok := result["permission_advice"]; ok {
+		t.Fatalf("advised a deny rule for a file without a reviewer: %s", data)
+	}
 }
 
 func TestSessionStartWithReviewerWarnsAndContinues(t *testing.T) {

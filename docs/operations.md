@@ -26,6 +26,32 @@ run reviewer commands itself (for example `herma --identity owner update ...`), 
 that case is out of scope. Agent-client permission rules reduce accidental access
 but cannot reliably stop a process from connecting to the socket.
 
+## Keeping the reviewer token out of the agents' file
+
+By default `.herma/credentials.json` holds every identity, so anything that can read
+it, including the session hook, also holds the reviewer token. To keep that token
+elsewhere, move reviewer identities into a second private (0600) file outside the
+repository and pass it to the server:
+
+```sh
+herma serve --reviewer-credentials ~/.config/herma/reviewer.json ...
+```
+
+`HERMA_REVIEWER_CREDENTIALS` sets the same path. The server merges both files and
+reloads either one when it changes; a name or token appearing in both is an
+error, and the merged set must contain a reviewer. Reviewer commands then name
+that file and the server's socket:
+
+```sh
+herma --credentials ~/.config/herma/reviewer.json --socket /path/to/.herma/herma.sock --identity owner whoami
+```
+
+To move an existing reviewer, copy its entry into the new file, restart the
+server with `--reviewer-credentials`, then `herma identity revoke owner` from the
+main file. Agents still run as your user and can read the new file if they look
+for it, so this keeps the token out of the hook and the repository rather than
+out of reach.
+
 If an interrupted identity command leaves a lock behind, the error names the
 exact lock file. Confirm no other `herma identity` command is running before
 removing that file and retrying.

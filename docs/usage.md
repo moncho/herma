@@ -44,7 +44,9 @@ it.
 
 Manage identities with `herma identity add NAME [--role agent|read-only|reviewer]`
 and `herma identity revoke NAME`. A running server applies changes within about two
-seconds, or immediately on `SIGHUP`. The last reviewer cannot be revoked.
+seconds, or immediately on `SIGHUP`. The server always keeps at least one
+reviewer: it rejects a change that would leave none and keeps the previous
+identities.
 
 The CLI sends reviewer commands over the socket next to the credentials file
 (override with `--socket` or `HERMA_SOCKET`) and everything else over TCP.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -14,11 +15,12 @@ import (
 var credentialsCheckInterval = 2 * time.Second
 
 // watchCredentials applies credential changes to a running server. It reloads
-// on every signal from hup and whenever the file's identity, size or
-// modification time changes from baseline, which the caller stats before
-// starting the watcher so an edit in between is not missed. An invalid file is reported and never applied.
-func watchCredentials(ctx context.Context, path string, baseline os.FileInfo, interval time.Duration, hup <-chan os.Signal, apply func(map[string]credential) error, log io.Writer) {
-	last := baseline
+// every file in paths on each signal from hup and whenever any file's identity,
+// size or modification time changes from its baseline, which the caller stats
+// before starting the watcher so an edit in between is not missed. An invalid
+// file, or a merged set without a reviewer, is reported and never applied.
+func watchCredentials(ctx context.Context, paths []string, baselines []os.FileInfo, interval time.Duration, hup <-chan os.Signal, apply func(map[string]credential) error, log io.Writer) {
+	last := append([]os.FileInfo(nil), baselines...)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -30,14 +32,20 @@ func watchCredentials(ctx context.Context, path string, baseline os.FileInfo, in
 			forced = true
 		case <-ticker.C:
 		}
-		info, err := os.Stat(path)
-		unchanged := err == nil && last != nil && os.SameFile(info, last) && info.Size() == last.Size() && info.ModTime().Equal(last.ModTime())
-		stillMissing := err != nil && last == nil
-		if !forced && (unchanged || stillMissing) {
+		changed := false
+		for i, path := range paths {
+			info, err := os.Stat(path)
+			unchanged := err == nil && last[i] != nil && os.SameFile(info, last[i]) && info.Size() == last[i].Size() && info.ModTime().Equal(last[i].ModTime())
+			stillMissing := err != nil && last[i] == nil
+			if !unchanged && !stillMissing {
+				changed = true
+			}
+			last[i] = info
+		}
+		if !forced && !changed {
 			continue
 		}
-		last = info
-		credentials, err := loadCredentials(path)
+		credentials, err := loadServerIdentities(paths)
 		if err == nil {
 			err = apply(credentials)
 		}
@@ -45,7 +53,7 @@ func watchCredentials(ctx context.Context, path string, baseline os.FileInfo, in
 			fmt.Fprintf(log, "herma: credentials not reloaded: %v; the previous identities remain in effect, including any this change removes\n", err)
 			continue
 		}
-		fmt.Fprintf(log, "herma: reloaded %d identities from %s\n", len(credentials), path)
+		fmt.Fprintf(log, "herma: reloaded %d identities from %s\n", len(credentials), strings.Join(paths, " and "))
 	}
 }
 

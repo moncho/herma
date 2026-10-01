@@ -13,11 +13,13 @@ run:
 # macOS background service for the current login session. Absolute paths keep
 # the service independent of whichever directory launchd starts it from.
 # Optional: make service-start BACKUP_DIR=/path/to/synced/folder
+#           REVIEWER_CREDENTIALS=/path/to/reviewer.json
 BACKUP_FLAGS = $(if $(BACKUP_DIR),--backup-dir "$(BACKUP_DIR)")
+REVIEWER_FLAGS = $(if $(REVIEWER_CREDENTIALS),--reviewer-credentials "$(REVIEWER_CREDENTIALS)")
 
 service-start: build
 	@test -f "$(CURDIR)/.herma/credentials.json" || { echo "Run ./bin/herma init first." >&2; exit 1; }
-	launchctl submit -l local.herma -o "$(CURDIR)/.herma/server.log" -e "$(CURDIR)/.herma/server.log" -- "$(CURDIR)/bin/herma" --credentials "$(CURDIR)/.herma/credentials.json" serve --db "$(CURDIR)/.herma/knowledge.sqlite3" --listen 127.0.0.1:8765 $(BACKUP_FLAGS)
+	launchctl submit -l local.herma -o "$(CURDIR)/.herma/server.log" -e "$(CURDIR)/.herma/server.log" -- "$(CURDIR)/bin/herma" --credentials "$(CURDIR)/.herma/credentials.json" serve --db "$(CURDIR)/.herma/knowledge.sqlite3" --listen 127.0.0.1:8765 $(BACKUP_FLAGS) $(REVIEWER_FLAGS)
 
 service-stop:
 	launchctl remove local.herma

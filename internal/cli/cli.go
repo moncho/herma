@@ -33,6 +33,8 @@ Global flags must come before the command. Environment defaults:
   HERMA_IDENTITY     local-agent
   HERMA_SOCKET       herma.sock next to the credentials file
   HERMA_TOKEN        optional bearer token; replaces credential-file authentication
+  HERMA_REVIEWER_CREDENTIALS
+                  second credentials file herma serve reads (--reviewer-credentials)
 
 For client commands, HERMA_TOKEN cannot be combined with --identity or a nonempty
 HERMA_IDENTITY. Unset HERMA_TOKEN to use a named identity from the credentials file.
@@ -41,9 +43,9 @@ Commands:
   init                         Create owner (reviewer) and local-agent credentials without overwriting
   identity add NAME [--role agent|read-only|reviewer]
                                Add credentials; the role defaults to agent
-  identity revoke NAME         Remove an identity; the last reviewer cannot be removed
+  identity revoke NAME         Remove an identity; herma serve keeps at least one reviewer
   whoami                       Show the authenticated identity, role and listener
-  serve [--db PATH] [--listen HOST:PORT] [--backup-dir DIR] [--backup-every 6h] [--backup-keep 14]
+  serve [--db PATH] [--listen HOST:PORT] [--reviewer-credentials PATH] [--backup-dir DIR] [--backup-every 6h] [--backup-keep 14]
   backup status                Show automatic snapshot status
   restore SNAPSHOT|DIR [--db PATH] [--replace]
                                Restore a snapshot with the service stopped
@@ -476,10 +478,15 @@ func identityCommand(cfg config, args []string, stdout, stderr io.Writer) error 
 		if len(args) != 2 {
 			return usage
 		}
-		if err := revokeIdentity(cfg.credentials, name); err != nil {
+		lastReviewer, err := revokeIdentity(cfg.credentials, name)
+		if err != nil {
 			return err
 		}
-		return output(stdout, map[string]string{"status": "revoked", "identity": name, "credentials": cfg.credentials, "message": "The running server stops accepting this token within a few seconds."})
+		message := "The running server stops accepting this token within a few seconds."
+		if lastReviewer {
+			message = "This file has no reviewer left. The running server applies the change only if another credentials file it reads (--reviewer-credentials) holds a reviewer; otherwise it keeps the previous identities and logs why."
+		}
+		return output(stdout, map[string]string{"status": "revoked", "identity": name, "credentials": cfg.credentials, "message": message})
 	default:
 		return usage
 	}

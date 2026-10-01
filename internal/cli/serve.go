@@ -80,6 +80,26 @@ func newHTTPServer(handler http.Handler) *http.Server {
 	return &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 }
 
+// serverCredentialPaths lists the credentials files herma serve reads. The
+// reviewer file is optional and must differ from the main one.
+func serverCredentialPaths(credentials, reviewerCredentials string) ([]string, error) {
+	if reviewerCredentials == "" {
+		return []string{credentials}, nil
+	}
+	main, err := filepath.Abs(credentials)
+	if err != nil {
+		return nil, fmt.Errorf("resolve credentials path: %w", err)
+	}
+	reviewer, err := filepath.Abs(reviewerCredentials)
+	if err != nil {
+		return nil, fmt.Errorf("resolve reviewer credentials path: %w", err)
+	}
+	if main == reviewer {
+		return nil, errors.New("--reviewer-credentials must name a different file from --credentials")
+	}
+	return []string{credentials, reviewerCredentials}, nil
+}
+
 func serve(ctx context.Context, cfg config, args []string, stderr io.Writer) error {
 	fs := flags("serve", stderr)
 	dbPath := fs.String("db", ".herma/knowledge.sqlite3", "SQLite database path")
@@ -87,6 +107,7 @@ func serve(ctx context.Context, cfg config, args []string, stderr io.Writer) err
 	backupDir := fs.String("backup-dir", "", "write snapshots into this directory (off when empty)")
 	backupEvery := fs.Duration("backup-every", 6*time.Hour, "interval between snapshots (minimum 5m)")
 	backupKeep := fs.Int("backup-keep", 14, "number of snapshots to keep (minimum 1)")
+	reviewerCredentials := fs.String("reviewer-credentials", envDefault("HERMA_REVIEWER_CREDENTIALS", ""), "second credentials file, typically holding reviewer identities kept apart from agents")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
@@ -113,8 +134,15 @@ func serve(ctx context.Context, cfg config, args []string, stderr io.Writer) err
 	if err != nil {
 		return err
 	}
-	credentialsBaseline, _ := os.Stat(cfg.credentials)
-	identities, err := loadCredentials(cfg.credentials)
+	credentialPaths, err := serverCredentialPaths(cfg.credentials, *reviewerCredentials)
+	if err != nil {
+		return err
+	}
+	baselines := make([]os.FileInfo, len(credentialPaths))
+	for i, path := range credentialPaths {
+		baselines[i], _ = os.Stat(path)
+	}
+	identities, err := loadServerIdentities(credentialPaths)
 	if err != nil {
 		return err
 	}
@@ -162,7 +190,7 @@ func serve(ctx context.Context, cfg config, args []string, stderr io.Writer) err
 	defer signal.Stop(hup)
 	watchCtx, stopWatching := context.WithCancel(ctx)
 	defer stopWatching()
-	go watchCredentials(watchCtx, cfg.credentials, credentialsBaseline, credentialsCheckInterval, hup, func(credentials map[string]credential) error {
+	go watchCredentials(watchCtx, credentialPaths, baselines, credentialsCheckInterval, hup, func(credentials map[string]credential) error {
 		return handler.SetIdentities(apiIdentities(credentials))
 	}, stderr)
 	backupCtx, stopBackups := context.WithCancel(ctx)

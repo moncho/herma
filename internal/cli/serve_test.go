@@ -85,12 +85,21 @@ func startServeWith(t *testing.T, serveArgs []string, extra ...identitySpec) (st
 		})
 	}
 	t.Cleanup(stop)
+	waitForServe(t, endpoint, filepath.Join(dir, "herma.sock"))
+	t.Setenv("HERMA_CREDENTIALS", credentials)
+	t.Setenv("HERMA_URL", endpoint)
+	return credentials, endpoint, stop
+}
+
+// waitForServe returns once herma serve answers on endpoint and has created socket.
+func waitForServe(t *testing.T, endpoint, socket string) {
+	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		response, err := http.Get(endpoint + "/health")
-		if _, socketErr := os.Stat(filepath.Join(dir, "herma.sock")); err == nil && socketErr == nil {
+		if _, socketErr := os.Stat(socket); err == nil && socketErr == nil {
 			response.Body.Close()
-			break
+			return
 		} else if err == nil {
 			response.Body.Close()
 		}
@@ -99,9 +108,6 @@ func startServeWith(t *testing.T, serveArgs []string, extra ...identitySpec) (st
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Setenv("HERMA_CREDENTIALS", credentials)
-	t.Setenv("HERMA_URL", endpoint)
-	return credentials, endpoint, stop
 }
 
 func startServe(t *testing.T, extra ...identitySpec) (string, string) {
