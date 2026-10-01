@@ -42,7 +42,7 @@ func startWatcher(t *testing.T, path string) (chan map[string]credential, chan o
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		watchCredentials(ctx, path, baseline, 10*time.Millisecond, hup, func(c map[string]credential) error { applied <- c; return nil }, log)
+		watchCredentials(ctx, []string{path}, []os.FileInfo{baseline}, 10*time.Millisecond, hup, func(c map[string]credential) error { applied <- c; return nil }, log)
 	}()
 	t.Cleanup(func() { cancel(); <-done })
 	return applied, hup, log
@@ -54,7 +54,7 @@ func TestWatchCredentialsAppliesChangesAndSignals(t *testing.T) {
 		t.Fatal(err)
 	}
 	applied, hup, _ := startWatcher(t, path)
-	if err := revokeIdentity(path, "local-agent"); err != nil {
+	if _, err := revokeIdentity(path, "local-agent"); err != nil {
 		t.Fatal(err)
 	}
 	select {

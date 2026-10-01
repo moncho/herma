@@ -104,6 +104,13 @@ func installHook(cfg config, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
+		loaded, err := loadCredentials(credentials)
+		if err != nil {
+			return err
+		}
+		if !hasReviewer(loaded) {
+			return output(stdout, result)
+		}
 		// Claude Code writes absolute paths in permission rules with a leading //.
 		result["permission_advice"] = "Keep agents from reading the reviewer token: in Claude Code, add \"Read(/" + credentials + ")\" to permissions.deny; in Codex, keep the credentials outside the writable workspace."
 	}

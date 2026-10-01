@@ -39,7 +39,6 @@ func validateCredentials(credentials map[string]credential) error {
 		return errors.New("credentials must contain at least one identity; run herma init first")
 	}
 	seen := make(map[string]bool)
-	reviewers := 0
 	for name, entry := range credentials {
 		if !identityPattern.MatchString(name) {
 			return fmt.Errorf("invalid identity %q: use 1–64 letters, digits, dots, underscores or hyphens, starting with a letter or digit", name)
@@ -50,18 +49,40 @@ func validateCredentials(credentials map[string]credential) error {
 		if !entry.Role.Valid() {
 			return fmt.Errorf("identity %q has role %q; use reviewer, agent, or read-only", name, entry.Role)
 		}
-		if entry.Role == store.RoleReviewer {
-			reviewers++
-		}
 		if seen[entry.Token] {
 			return errors.New("every identity must have a distinct token")
 		}
 		seen[entry.Token] = true
 	}
-	if reviewers == 0 {
-		return errors.New("credentials must contain at least one reviewer identity")
-	}
 	return nil
+}
+
+// loadServerIdentities loads every credentials file herma serve reads and merges
+// them. A single file need not hold a reviewer, but the merged set must, so a
+// reviewer's token can live apart from the file agents use.
+func loadServerIdentities(paths []string) (map[string]credential, error) {
+	merged := make(map[string]credential)
+	tokens := make(map[string]bool)
+	for _, path := range paths {
+		credentials, err := loadCredentials(path)
+		if err != nil {
+			return nil, err
+		}
+		for name, entry := range credentials {
+			if _, ok := merged[name]; ok {
+				return nil, fmt.Errorf("identity %q appears in more than one credentials file", name)
+			}
+			if tokens[entry.Token] {
+				return nil, errors.New("every identity must have a distinct token, across all credentials files")
+			}
+			tokens[entry.Token] = true
+			merged[name] = entry
+		}
+	}
+	if !hasReviewer(merged) {
+		return nil, errors.New("herma serve needs at least one reviewer identity; add one to --credentials or pass --reviewer-credentials")
+	}
+	return merged, nil
 }
 
 func loadCredentials(path string) (map[string]credential, error) {
@@ -224,18 +245,21 @@ func addIdentity(path, name string, role store.Role) error {
 	})
 }
 
-func revokeIdentity(path, name string) error {
-	return updateCredentials(path, func(credentials map[string]credential) error {
+// revokeIdentity removes name from the file at path. It reports whether that
+// removed the file's last reviewer; herma serve rejects such a change unless
+// another credentials file it reads still holds a reviewer.
+func revokeIdentity(path, name string) (bool, error) {
+	lastReviewer := false
+	err := updateCredentials(path, func(credentials map[string]credential) error {
 		entry, ok := credentials[name]
 		if !ok {
 			return fmt.Errorf("identity %q is not in the credentials file", name)
 		}
 		delete(credentials, name)
-		if entry.Role == store.RoleReviewer && !hasReviewer(credentials) {
-			return fmt.Errorf("cannot revoke %q: it is the last reviewer identity", name)
-		}
+		lastReviewer = entry.Role == store.RoleReviewer && !hasReviewer(credentials)
 		return nil
 	})
+	return lastReviewer, err
 }
 
 func hasReviewer(credentials map[string]credential) bool {

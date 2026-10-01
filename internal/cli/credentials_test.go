@@ -33,7 +33,6 @@ func TestLoadCredentialsRejectsMalformedEntriesAndInvalidRoles(t *testing.T) {
 	for name, test := range map[string]struct{ content, want string }{
 		"plain token": {`{"owner":"` + token + `"}`, "token and role"},
 		"role typo":   {`{"owner":{"token":"` + token + `","role":"reviwer"}}`, "reviewer, agent, or read-only"},
-		"no reviewer": {`{"worker":{"token":"` + token + `","role":"agent"}}`, "at least one reviewer"},
 		"extra field": {`{"owner":{"token":"` + token + `","role":"reviewer","admin":true}}`, "token and role"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -52,7 +51,7 @@ func TestLoadCredentialsRejectsMalformedEntriesAndInvalidRoles(t *testing.T) {
 	}
 }
 
-func TestIdentityAddDefaultsToAgentAndRevokeKeepsAReviewer(t *testing.T) {
+func TestIdentityAddDefaultsToAgentAndRevokeRemoves(t *testing.T) {
 	cleanEnv(t)
 	path := filepath.Join(t.TempDir(), "credentials.json")
 	run := func(args ...string) error {
@@ -81,9 +80,6 @@ func TestIdentityAddDefaultsToAgentAndRevokeKeepsAReviewer(t *testing.T) {
 	if err := run("identity", "revoke", "laptop"); err != nil {
 		t.Fatal(err)
 	}
-	if err := run("identity", "revoke", "owner"); err == nil || !strings.Contains(err.Error(), "last reviewer") {
-		t.Fatalf("revoking the last reviewer: %v", err)
-	}
 	if err := run("identity", "revoke", "missing"); err == nil {
 		t.Fatal("revoked an unknown identity")
 	}
@@ -93,6 +89,81 @@ func TestIdentityAddDefaultsToAgentAndRevokeKeepsAReviewer(t *testing.T) {
 	}
 	if _, ok := credentials["laptop"]; ok || credentials["owner"].Role != store.RoleReviewer {
 		t.Fatalf("after revoke: %+v", credentials)
+	}
+}
+
+func TestLoadCredentialsAcceptsAgentOnlyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credentials.json")
+	token := strings.Repeat("a", 64)
+	if err := os.WriteFile(path, []byte(`{"local-agent":{"token":"`+token+`","role":"agent"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	credentials, err := loadCredentials(path)
+	if err != nil || credentials["local-agent"].Role != store.RoleAgent {
+		t.Fatalf("agent-only file: %+v, %v", credentials, err)
+	}
+	cfg := config{credentials: path, identity: "local-agent"}
+	if role, err := cfg.identityRole(); err != nil || role != store.RoleAgent {
+		t.Fatalf("identity role from agent-only file: %q, %v", role, err)
+	}
+}
+
+func TestRevokingAFilesLastReviewerWarns(t *testing.T) {
+	cleanEnv(t)
+	path := filepath.Join(t.TempDir(), "credentials.json")
+	if err := initCredentials(path); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := Run(context.Background(), []string{"--credentials", path, "identity", "revoke", "owner"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "no reviewer left") {
+		t.Fatalf("revoke output did not warn: %s", stdout.String())
+	}
+	credentials, err := loadCredentials(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := credentials["owner"]; ok {
+		t.Fatal("owner was not revoked")
+	}
+}
+
+func TestLoadServerIdentitiesMergesFiles(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	agentToken, reviewerToken := strings.Repeat("a", 64), strings.Repeat("r", 64)
+	agents := write("agents.json", `{"local-agent":{"token":"`+agentToken+`","role":"agent"}}`)
+	reviewers := write("reviewers.json", `{"owner":{"token":"`+reviewerToken+`","role":"reviewer"}}`)
+	merged, err := loadServerIdentities([]string{agents, reviewers})
+	if err != nil || len(merged) != 2 || merged["owner"].Role != store.RoleReviewer || merged["local-agent"].Role != store.RoleAgent {
+		t.Fatalf("merged: %+v, %v", merged, err)
+	}
+	for name, test := range map[string]struct {
+		paths []string
+		want  string
+	}{
+		"no reviewer":    {[]string{agents}, "at least one reviewer"},
+		"same name":      {[]string{reviewers, write("again.json", `{"owner":{"token":"`+strings.Repeat("x", 64)+`","role":"reviewer"}}`)}, "more than one credentials file"},
+		"same token":     {[]string{agents, write("copy.json", `{"owner":{"token":"`+agentToken+`","role":"reviewer"}}`)}, "distinct token"},
+		"invalid second": {[]string{agents, write("bad.json", `{"owner":`)}, "JSON object"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := loadServerIdentities(test.paths)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("got %v, want an error containing %q", err, test.want)
+			}
+			if strings.Contains(err.Error(), agentToken) {
+				t.Fatal("error exposed a token")
+			}
+		})
 	}
 }
 

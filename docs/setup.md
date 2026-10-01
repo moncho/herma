@@ -48,6 +48,10 @@ Give each database its own folder. On a new machine, run `herma restore` before
 starting the service with `BACKUP_DIR`: herma refuses to serve an empty database
 against a folder with newer snapshots.
 
+To keep the reviewer token out of `.herma/credentials.json`, add
+`REVIEWER_CREDENTIALS=/absolute/path/reviewer.json`; see
+[keeping the reviewer token out of the agents' file](operations.md#keeping-the-reviewer-token-out-of-the-agents-file).
+
 In the foreground, use `./bin/herma serve --backup-dir DIR`. See
 [backups and restore](operations.md#backups-and-restore).
 
