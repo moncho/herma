@@ -35,6 +35,7 @@ type contextRecord struct {
 
 type projectContext struct {
 	Scope          string          `json:"scope"`
+	Recall         string          `json:"recall"`
 	Project        contextRecord   `json:"project"`
 	Tasks          []contextRecord `json:"tasks"`
 	Feedback       []contextRecord `json:"feedback"`
@@ -61,13 +62,13 @@ func packContext(snapshot contextSnapshot, budget int, includeDurable bool) ([]b
 		return nil, errors.New("project identity does not fit the context budget")
 	}
 	result := projectContext{
-		Scope: contextScope, Project: project, GeneratedAt: snapshot.GeneratedAt,
+		Scope: contextScope, Recall: recallHint, Project: project, GeneratedAt: snapshot.GeneratedAt,
 		Tasks: []contextRecord{}, Feedback: []contextRecord{}, Notes: []contextRecord{},
 		Knowledge: []contextRecord{}, Principles: []contextRecord{},
 		MaxBytes: budget, IncludeDurable: includeDurable, Omitted: snapshot.Totals,
 	}
 	if !includeDurable {
-		result.Omitted.Knowledge, result.Omitted.Principles = 0, 0
+		result.Omitted.Knowledge = 0
 	}
 	clipped := recordClipped(project)
 	result.Truncated = clipped || result.Omitted.any()
@@ -79,6 +80,50 @@ func packContext(snapshot contextSnapshot, budget int, includeDurable bool) ([]b
 		record  store.Record
 		target  *[]contextRecord
 		omitted *int
+	}
+	// add places one candidate if the packet stays within limit. It reports
+	// false when no space is left at all, so callers can stop early.
+	add := func(c candidate, limit int) (bool, error) {
+		// Reserve one byte for a new array comma and one for true -> false if
+		// this completes an otherwise untruncated packet. Omission counts only shrink.
+		available := min(recordBudget, limit-len(data)-2)
+		if available <= 0 {
+			return false, nil
+		}
+		record, fits := fitContextRecord(c.record, available)
+		if !fits {
+			return true, nil
+		}
+		*c.target = append(*c.target, record)
+		*c.omitted--
+		previousClipped := clipped
+		clipped = clipped || recordClipped(record)
+		result.Truncated = clipped || result.Omitted.any()
+		next, err := encodeContext(result)
+		if err != nil {
+			return false, err
+		}
+		if len(next) > limit {
+			// Keep the final check independent of size-estimation assumptions.
+			*c.target = (*c.target)[:len(*c.target)-1]
+			*c.omitted++
+			clipped = previousClipped
+			result.Truncated = clipped || result.Omitted.any()
+			return true, nil
+		}
+		data = next
+		return true, nil
+	}
+	// Principles are conventions every session follows, so they go first, but
+	// they may grow the packet by at most a quarter of the budget.
+	// The clamp keeps the hard max_bytes guarantee independent of metadata size.
+	principleLimit := min(budget, len(data)+budget/4)
+	for _, record := range snapshot.Principles {
+		if more, err := add(candidate{record, &result.Principles, &result.Omitted.Principles}, principleLimit); err != nil {
+			return nil, err
+		} else if !more {
+			break
+		}
 	}
 	coordination := make([]candidate, 0, len(snapshot.Tasks)+len(snapshot.Feedback))
 	for _, record := range snapshot.Tasks {
@@ -92,7 +137,7 @@ func packContext(snapshot contextSnapshot, budget int, includeDurable bool) ([]b
 	})
 	candidates := coordination
 	// Notes describe handoffs and recent session events, so recency outweighs
-	// their priority. Durable information is always considered last and opt-in.
+	// their priority. Knowledge is always considered last and opt-in.
 	notes := append([]store.Record(nil), snapshot.Notes...)
 	sort.Slice(notes, func(i, j int) bool { return contextRecordLess(notes[i], notes[j], true) })
 	for _, record := range notes {
@@ -102,39 +147,13 @@ func packContext(snapshot contextSnapshot, budget int, includeDurable bool) ([]b
 		for _, record := range snapshot.Knowledge {
 			candidates = append(candidates, candidate{record, &result.Knowledge, &result.Omitted.Knowledge})
 		}
-		for _, record := range snapshot.Principles {
-			candidates = append(candidates, candidate{record, &result.Principles, &result.Omitted.Principles})
-		}
 	}
-	for _, candidate := range candidates {
-		// Reserve one byte for a new array comma and one for true -> false if
-		// this completes an otherwise untruncated packet. Omission counts only shrink.
-		available := min(recordBudget, budget-len(data)-2)
-		if available <= 0 {
+	for _, c := range candidates {
+		if more, err := add(c, budget); err != nil {
+			return nil, err
+		} else if !more {
 			break
 		}
-		record, fits := fitContextRecord(candidate.record, available)
-		if !fits {
-			continue
-		}
-		*candidate.target = append(*candidate.target, record)
-		*candidate.omitted--
-		previousClipped := clipped
-		clipped = clipped || recordClipped(record)
-		result.Truncated = clipped || result.Omitted.any()
-		next, err := encodeContext(result)
-		if err != nil {
-			return nil, err
-		}
-		if len(next) > budget {
-			// Keep the final check independent of size-estimation assumptions.
-			*candidate.target = (*candidate.target)[:len(*candidate.target)-1]
-			*candidate.omitted++
-			clipped = previousClipped
-			result.Truncated = clipped || result.Omitted.any()
-			continue
-		}
-		data = next
 	}
 	return data, nil
 }

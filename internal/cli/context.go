@@ -66,7 +66,7 @@ func projectContextCommand(ctx context.Context, cfg config, args []string, stdou
 	fs := flags("context", stderr)
 	id := fs.String("project", "", "project ID; defaults to the nearest .herma-project.json")
 	budget := fs.Int("max-bytes", project.DefaultMaxBytes, "maximum context JSON bytes, including metadata")
-	durable := fs.Bool("include-durable", false, "also include legacy accepted knowledge and principles")
+	durable := fs.Bool("include-durable", false, "also include accepted knowledge")
 	if err := parse(fs, args); err != nil {
 		return err
 	}

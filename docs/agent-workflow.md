@@ -76,9 +76,9 @@ herma schema
 Default context contains the project, open working-intent records, unresolved
 coordination feedback, and recent handoffs. Its entire JSON packet is limited to
 12 KiB by default; `--max-bytes N` or the binding can select 2–64 KiB. Working
-intent and blockers take priority over handoffs. `knowledge` and `principle`
-records are available through `get`, `list`, or manual
-`context --include-durable`; automatic context uses the coordination scope.
+intent and blockers take priority over handoffs. Accepted principles are always
+included first; `knowledge` records are available through `herma recall`, `get`,
+`list`, or manual `context --include-durable`.
 
 Treat context as a summary. Check `truncated`, per-category `omitted` counts,
 `body_truncated`, and `truncated_fields` before relying on completeness. Retrieve

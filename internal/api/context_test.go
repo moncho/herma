@@ -42,7 +42,7 @@ func decodeContextResponse(t *testing.T, response *httptest.ResponseRecorder, bu
 	if err := json.Unmarshal(data, &packet); err != nil {
 		t.Fatal(err)
 	}
-	if packet.MaxBytes != budget || packet.Scope != contextScope || packet.GeneratedAt.IsZero() {
+	if packet.MaxBytes != budget || packet.Scope != contextScope || packet.Recall != recallHint || packet.GeneratedAt.IsZero() {
 		t.Errorf("context metadata missing or inconsistent: %+v", packet)
 	}
 	return packet
@@ -54,7 +54,7 @@ func requestContext(t *testing.T, h http.Handler, projectID, extraQuery string, 
 	return decodeContextResponse(t, response, budget)
 }
 
-func TestContextDefaultsToCoordinationAndOptsInDurable(t *testing.T) {
+func TestContextDefaultsToCoordinationAndPrinciplesAndOptsInKnowledge(t *testing.T) {
 	h, s := apiTestHandler(t, nil)
 	project := createContextRecord(t, s, store.CreateInput{Kind: "project", Title: "Session coordination", Body: "Current handoff scope."})
 	task := createContextRecord(t, s, store.CreateInput{Kind: "task", Title: "Next session intention", Body: "Continue the investigation.", ProjectID: project.ID, Owner: "next-session", Sources: []string{"https://linear.app/example/issue/ONE"}})
@@ -67,8 +67,11 @@ func TestContextDefaultsToCoordinationAndOptsInDurable(t *testing.T) {
 	createContextRecord(t, s, store.CreateInput{Kind: "feedback", Title: "Already handled", Status: "resolved", ProjectID: project.ID})
 
 	packet := requestContext(t, h, project.ID, "", defaultContextBytes)
-	if packet.IncludeDurable || packet.Truncated || packet.Omitted.any() || len(packet.Knowledge) != 0 || len(packet.Principles) != 0 {
-		t.Errorf("default context must exclude durable data without claiming truncation: %+v", packet)
+	if packet.IncludeDurable || packet.Truncated || packet.Omitted.any() || len(packet.Knowledge) != 0 || len(packet.Principles) != 1 || packet.Principles[0].ID != principle.ID {
+		t.Errorf("default context must include accepted principles and exclude knowledge without claiming truncation: %+v", packet)
+	}
+	if packet.Recall != recallHint {
+		t.Errorf("recall hint = %q", packet.Recall)
 	}
 	if packet.Project.ID != project.ID || len(packet.Tasks) != 1 || packet.Tasks[0].ID != task.ID || len(packet.Feedback) != 1 || packet.Feedback[0].ID != feedback.ID || len(packet.Notes) != 1 || packet.Notes[0].ID != note.ID {
 		t.Fatalf("coordination context missing active records: %+v", packet)
@@ -254,5 +257,67 @@ func TestConcurrentContextRequestsKeepIndependentBudgets(t *testing.T) {
 		if packet.Project.ID != project.ID || !packet.Truncated || packet.Omitted.Notes != 12-len(packet.Notes) {
 			t.Errorf("concurrent context requests leaked state or budget: %+v", packet)
 		}
+	}
+}
+
+func TestContextPrinciplesUseAtMostAQuarterAndYieldUnusedSpace(t *testing.T) {
+	h, s := apiTestHandler(t, nil)
+	project := createContextRecord(t, s, store.CreateInput{Kind: "project", Title: "Principled"})
+	for i := 0; i < 20; i++ {
+		createContextRecord(t, s, store.CreateInput{Kind: "principle", Title: fmt.Sprintf("Rule %02d", i), Body: strings.Repeat("rule ", 80), Status: "accepted", Sources: []string{"https://example.com/review"}})
+	}
+	for i := 0; i < 40; i++ {
+		createContextRecord(t, s, store.CreateInput{Kind: "task", Title: fmt.Sprintf("Task %02d", i), Body: strings.Repeat("task ", 40), ProjectID: project.ID})
+	}
+	const budget = 8192
+	packet := requestContext(t, h, project.ID, "&max_bytes=8192", budget)
+	principleBytes := 0
+	for _, p := range packet.Principles {
+		data, _ := json.Marshal(p)
+		principleBytes += len(data) + 1
+	}
+	if len(packet.Principles) == 0 || principleBytes > budget/4 || packet.Omitted.Principles != 20-len(packet.Principles) || len(packet.Tasks) == 0 {
+		t.Fatalf("principles %d (%d bytes, omitted %d), tasks %d", len(packet.Principles), principleBytes, packet.Omitted.Principles, len(packet.Tasks))
+	}
+	// With one tiny principle, coordination gets the unused principle share.
+	h2, s2 := apiTestHandler(t, nil)
+	p2 := createContextRecord(t, s2, store.CreateInput{Kind: "project", Title: "Few rules"})
+	createContextRecord(t, s2, store.CreateInput{Kind: "principle", Title: "One rule", Status: "accepted", Sources: []string{"https://example.com/review"}})
+	for i := 0; i < 40; i++ {
+		createContextRecord(t, s2, store.CreateInput{Kind: "task", Title: fmt.Sprintf("Task %02d", i), Body: strings.Repeat("task ", 40), ProjectID: p2.ID})
+	}
+	response := apiTestRequest(h2, http.MethodGet, "/v1/context?project_id="+p2.ID+"&max_bytes=8192", "", "", "Bearer "+apiTestToken, "")
+	if response.Body.Len() < budget*85/100 {
+		t.Errorf("coordination did not use the unused principle share: %d of %d bytes", response.Body.Len(), budget)
+	}
+}
+
+func TestContextClipsAnOversizedPrinciple(t *testing.T) {
+	h, s := apiTestHandler(t, nil)
+	project := createContextRecord(t, s, store.CreateInput{Kind: "project", Title: "Big rule"})
+	createContextRecord(t, s, store.CreateInput{Kind: "principle", Title: "Huge rule", Body: strings.Repeat("rule ", 4000), Status: "accepted", Sources: []string{"https://example.com/review"}, ProjectID: project.ID})
+	task := createContextRecord(t, s, store.CreateInput{Kind: "task", Title: "Keep working", ProjectID: project.ID})
+	packet := requestContext(t, h, project.ID, "&max_bytes=2048", 2048)
+	if len(packet.Principles) != 1 || !packet.Principles[0].BodyTruncated || len(packet.Tasks) != 1 || packet.Tasks[0].ID != task.ID {
+		t.Fatalf("oversized principle: %+v", packet)
+	}
+}
+
+func TestContextNeverLoadsUnacceptedPrinciples(t *testing.T) {
+	h, s := apiTestHandler(t, nil)
+	project := createContextRecord(t, s, store.CreateInput{Kind: "project", Title: "Pending rules"})
+	createContextRecord(t, s, store.CreateInput{Kind: "principle", Title: "Proposed rule", ProjectID: project.ID})
+	for _, status := range []string{"rejected", "superseded"} {
+		createContextRecord(t, s, store.CreateInput{Kind: "principle", Title: status + " rule", Status: status, ProjectID: project.ID})
+	}
+	if packet := requestContext(t, h, project.ID, "", defaultContextBytes); len(packet.Principles) != 0 || packet.Omitted.Principles != 0 {
+		t.Fatalf("unaccepted principles loaded: %+v", packet)
+	}
+}
+
+func TestRecallHintWording(t *testing.T) {
+	const want = "Not all reviewed knowledge is loaded here. When a task touches past decisions or conventions, search it with: herma recall \"<words>\""
+	if recallHint != want {
+		t.Errorf("recallHint = %q, want %q", recallHint, want)
 	}
 }

@@ -204,6 +204,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if method(w, r, http.MethodGet) {
 			h.projectContext(w, r)
 		}
+	case "/v1/recall":
+		if method(w, r, http.MethodGet) {
+			h.recall(w, r)
+		}
 	case "/v1/export":
 		if method(w, r, http.MethodGet) {
 			h.export(w, r)
