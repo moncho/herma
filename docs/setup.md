@@ -128,6 +128,9 @@ the agent environment and warn if it is missing, without falling back to another
 identity. Named-identity installs require `HERMA_TOKEN` to be unset. No MCP server
 is needed for this automatic loading path.
 
+Each session also receives the project's accepted principles and a hint to use
+`herma recall` for other reviewed knowledge.
+
 After binding, `herma context` works without repeating the project ID. Context
 refreshes at session boundaries; run it again during a long session before
 coordinating an edit with another agent.

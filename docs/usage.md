@@ -116,8 +116,11 @@ history and export. There is no hard-delete endpoint.
 `herma context` (or `herma context --project ID`) returns:
 
 - The unarchived project.
+- Accepted principles, project and global, always included first and limited to
+  at most a quarter of the budget.
 - Session coordination records (`task`) in `open`, `in_progress` or `blocked` state.
 - Recent handoff notes and unresolved coordination feedback.
+- A `recall` hint pointing at `herma recall` for other reviewed knowledge.
 
 The entire compact JSON response, including metadata and newline, is capped at
 **12 KiB by default**. Use `--max-bytes N` (2–64 KiB), or set `max_bytes` in the
@@ -133,11 +136,34 @@ was clipped or left out. Use `get ID` to retrieve a complete, fresh record befor
 editing, or filtered/paginated `list` for omitted items. A 100-record candidate
 limit per category also bounds query work; it does not define the text budget.
 
-Other projects, archived records and knowledge/principles are excluded by
-default. `context --include-durable` adds accepted knowledge and principles;
-proposed, rejected and superseded ones never enter context and are available
-through `get`, `list`, search and export. The automatic startup hook always uses
-coordination-only context.
+Other projects, archived records and accepted knowledge are excluded by
+default. `context --include-durable` adds accepted knowledge after the
+principles; proposed, rejected and superseded records never enter context and are
+available through `get`, `list`, search and export. The automatic startup hook
+does not include knowledge: it loads principles and the `recall` hint, and
+`herma recall` finds the rest.
+
+## Recall
+
+`herma recall "words"` searches accepted knowledge and principles and returns the
+best matches first:
+
+```sh
+./bin/herma recall "snapshot pruning"
+./bin/herma recall "retry backoff" --include-proposed --limit 5
+```
+
+A record matches when it contains any of the words; longer words also match
+their stem, so `retries` finds `retry`. Title matches count more than body
+matches, and the checkout's project comes before global records. Without
+`--project`, recall uses the nearest `.herma-project.json`, or searches every
+project when there is none. `--include-proposed` adds unreviewed records,
+marked by `"status": "proposed"`.
+
+The compact JSON response fits `--max-bytes` (default 8 KiB, 2–64 KiB). Long
+bodies are cut and marked with `body_truncated`; `omitted` counts matches that
+did not fit. Use `herma get ID` for the complete record. Search does not segment
+Chinese or Japanese text into words.
 
 ## Search and lists
 

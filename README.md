@@ -11,7 +11,8 @@ know, and a reviewed store of knowledge that outlives any single session.
 - **Coordination that loads itself.** A SessionStart hook hands every new session
   a compact, byte-capped packet of open work, blockers and recent handoffs.
 - **Memory you approve.** Agents propose knowledge and principles; only you, the
-  reviewer, can accept them. Nothing unreviewed is loaded into a session.
+  reviewer, can accept them. Accepted principles load into every session, and
+  `herma recall "words"` finds the rest by relevance. Nothing unreviewed is loaded.
 - **Safe to share across machines.** Agents on other machines connect through a
   tunnel with their own tokens. Your reviewer token works only on a local socket,
   so a copied token can't approve anything.

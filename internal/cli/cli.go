@@ -57,6 +57,8 @@ Commands:
   hook session-start           Load bounded project context for a SessionStart hook
   review [--limit N] [--offset N]  List proposed knowledge and principles awaiting review
   context [--project ID] [--max-bytes N] [--include-durable]
+  recall "words" [--project ID] [--include-proposed] [--limit N] [--max-bytes N]
+                               Search reviewed knowledge and principles by relevance
   schema
   export
 
@@ -173,6 +175,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return cfg.request(ctx, stdout, http.MethodGet, path, nil, nil, "")
 	case "context":
 		return projectContextCommand(ctx, cfg, rest, stdout, stderr)
+	case "recall":
+		return recallCommand(ctx, cfg, rest, stdout, stderr)
 	case "schema", "export":
 		if err := noOptions(command, rest, stderr); err != nil {
 			return err

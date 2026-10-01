@@ -40,7 +40,8 @@ func schemaDocument() map[string]any {
 			{"method": "GET", "path": "/v1/records/{id}", "purpose": "read a record, including archived records"},
 			{"method": "PATCH", "path": "/v1/records/{id}", "purpose": "update supplied fields at expected version; 409 for stale edits"},
 			{"method": "GET", "path": "/v1/records/{id}/history", "purpose": "complete snapshots ordered by version"},
-			{"method": "GET", "path": "/v1/context?project_id={id}", "purpose": "bounded session coordination and handoffs: project, unfinished task intentions, unresolved feedback and recent notes; durable knowledge/principles require include_durable=true"},
+			{"method": "GET", "path": "/v1/context?project_id={id}", "purpose": "bounded session coordination and handoffs: project, unfinished task intentions, unresolved feedback and recent notes; accepted principles always; knowledge requires include_durable=true"},
+			{"method": "GET", "path": "/v1/recall?q={words}", "purpose": "relevance-ranked accepted knowledge and principles (plus proposed with include_proposed=true); project_id limits to that project and global records; limit 1–100 (default 20); max_bytes 2048–65536 (default 8192) bounds the complete response"},
 			{"method": "GET", "path": "/v1/export", "purpose": "all records and revisions including archived records; excludes credentials and replay receipts; 413 above 16 MiB, 503 if preparation times out"},
 		},
 		"roles": map[string]string{
@@ -55,9 +56,9 @@ func schemaDocument() map[string]any {
 			"query": map[string]string{
 				"project_id":      "required unarchived project ID",
 				"max_bytes":       "complete JSON response including metadata, escaping and newline; default 12288, minimum 2048, maximum 65536",
-				"include_durable": "boolean, default false; true includes accepted global/project knowledge and principles after coordination records",
+				"include_durable": "boolean, default false; true adds accepted global/project knowledge after coordination records and notes",
 			},
-			"selection":            "project identity is always present; tasks and feedback sort by priority then recency, followed by recent notes, then optional durable records; at most 100 candidates per category",
+			"selection":            "project identity is always present; accepted principles (project and global) come first and use at most a quarter of max_bytes; then tasks and feedback by priority then recency, then recent notes, then optional knowledge; at most 100 candidates per category; a recall hint points to GET /v1/recall",
 			"projection":           "record previews retain id, kind, title, body, status and version; priority, project_id, owner, updated_by, updated_at, sources, links, reviewed_by and reviewed_at are retained when space allows; tags, creation metadata and archive flags are not part of context",
 			"truncation":           "truncated is true if previews are clipped or eligible records omitted; omitted counts whole missing records by category; body_truncated marks a body prefix; truncated_fields names other shortened or dropped fields; excluded durable categories are not counted as omissions",
 			"record_preview_bytes": "each record preview uses at most a quarter of max_bytes or 2048 bytes; sources and links are omitted whole, never shortened; GET /v1/records/{id} returns the complete record",

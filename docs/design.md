@@ -23,8 +23,8 @@ The product scope is coordination between concurrent sessions and handoffs to
 their successors, plus reviewed durable knowledge. Agents propose knowledge and
 principle records and the reviewer accepts them; Linear owns real tasks. Task
 records describe temporary session working intent, ownership and blockers with
-source links; notes describe handoffs. Knowledge and principle records are not
-automatically loaded into session context.
+source links; notes describe handoffs. Accepted principles load into every
+session's context; knowledge is found with `herma recall` or `--include-durable`.
 
 ## Data and concurrency
 
@@ -66,8 +66,9 @@ when the file changes; an invalid file keeps the previous identities.
 - Six validated record kinds, with no arbitrary schema creation.
 - One reviewer; roles separate the reviewer from agents and read-only sessions.
 - Plain-text full-text search and structured filters; no embeddings or model
-  calls are required. The tokenizer does not segment Chinese or Japanese runs
-  into linguistic words, and search does not provide arbitrary substring matches.
+  calls are required. Recall ranks accepted knowledge with FTS5 `bm25`, any-word
+  matching and four-rune stems. A trigram index for substrings and Chinese or
+  Japanese segmentation is deferred.
 - SessionStart hooks load context for bound projects in Claude Code and Codex.
   They read only, refresh at session boundaries, and fail open after a short
   deadline. They do not write a handoff automatically or watch other sessions.
