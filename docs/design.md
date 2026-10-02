@@ -21,9 +21,9 @@ merges client hook configurations while preserving other settings.
 
 The product scope is coordination between concurrent sessions and handoffs to
 their successors, plus reviewed durable knowledge. Agents propose knowledge and
-principle records and the reviewer accepts them; Linear owns real tasks. Task
-records describe temporary session working intent, ownership and blockers with
-source links; notes describe handoffs. Accepted principles load into every
+principle records and the reviewer accepts them; the issue tracker owns real
+tasks. Task records describe temporary session working intent, ownership and
+blockers with source links; notes describe handoffs. Accepted principles load into every
 session's context; knowledge is found with `herma recall` or `--include-durable`.
 
 ## Data and concurrency
@@ -72,8 +72,8 @@ when the file changes; an invalid file keeps the previous identities.
 - SessionStart hooks load context for bound projects in Claude Code and Codex.
   They read only, refresh at session boundaries, and fail open after a short
   deadline. They do not write a handoff automatically or watch other sessions.
-- No automatic ingestion, orchestration, Linear synchronization, job scheduling
-  or web interface. Agents record coordination changes explicitly.
+- No automatic ingestion, orchestration, issue-tracker synchronization, job
+  scheduling or web interface. Agents record coordination changes explicitly.
 - No hard deletion or retention policy; history and retry receipts accumulate.
   Receipts reference the revision they returned rather than copying the record.
 - Durability comes from `VACUUM INTO` snapshots that `herma serve` writes into a

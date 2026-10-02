@@ -40,7 +40,7 @@ func TestTextContextNeverExceedsItsBudget(t *testing.T) {
 	project := createContextRecord(t, s, store.CreateInput{Kind: "project", Title: "Text budget", Body: "Repository sessions"})
 	for i := 0; i < 30; i++ {
 		createContextRecord(t, s, store.CreateInput{Kind: "principle", Title: fmt.Sprintf("Rule %02d", i), Body: strings.Repeat("规则 rule\n", 30), Status: "accepted", Sources: []string{"https://example.com/review/" + strings.Repeat("s", 200)}, ProjectID: project.ID})
-		createContextRecord(t, s, store.CreateInput{Kind: "task", Title: fmt.Sprintf("Task %02d", i), Body: strings.Repeat("引き継ぎ🙂 ", 120), Owner: "session-a", ProjectID: project.ID, Sources: []string{strings.Repeat("https://linear.app/x/", 20)}})
+		createContextRecord(t, s, store.CreateInput{Kind: "task", Title: fmt.Sprintf("Task %02d", i), Body: strings.Repeat("引き継ぎ🙂 ", 120), Owner: "session-a", ProjectID: project.ID, Sources: []string{strings.Repeat("https://issues.tld/x/", 20)}})
 		createContextRecord(t, s, store.CreateInput{Kind: "note", Title: fmt.Sprintf("Note %02d", i), Body: strings.Repeat("handoff\n", 200), ProjectID: project.ID})
 	}
 	for _, budget := range []int{2048, 4096, 10000, 65536} {

@@ -3,8 +3,8 @@
 Use herma to tell other sessions who is working where, what changed, what is
 blocked, and what the next session should do. Propose durable decisions and
 conventions as `knowledge` or `principle` records; the reviewer accepts them.
-Keep the real task backlog and issue status in Linear, linking those sources
-from coordination records and handoffs.
+Keep the real task backlog and issue status in your issue tracker, linking
+those sources from coordination records and handoffs.
 
 ## Set up automatic session context
 
@@ -87,21 +87,21 @@ needs the structured packet.
 Treat context as a summary. Check the closing Omitted/Clipped line (or
 `truncated`, `omitted`, `body_truncated` and `truncated_fields` in
 `--format json`) before relying on completeness. Retrieve
-omitted records with filtered, paginated `list` queries. Read linked Linear
-issues, memory files and wiki pages for the canonical information, and use
-`herma get RECORD_ID` for the complete current record before every edit.
+omitted records with filtered, paginated `list` queries. Read linked issues,
+memory files and wiki pages for the canonical information, and use `herma get
+RECORD_ID` for the complete current record before every edit.
 
 ## Announce working intent
 
 Create a coordination record when another session needs to know your scope,
 ownership or blocker. A `task` in herma describes that session activity; it is not a
-second Linear backlog. Use the real issue URL in `sources`:
+second backlog. Use the real issue URL in `sources`:
 
 ```sh
 herma --identity session-a create --kind task --project PROJECT_ID \
   --title 'Session A is editing request validation' \
   --body 'Working in internal/api. Coordinate overlapping edits before changing these files.' \
-  --status in_progress --owner session-a --sources LINEAR_ISSUE_URL \
+  --status in_progress --owner session-a --sources ISSUE_URL \
   --request-id session-a-validation-start-1
 ```
 
@@ -122,7 +122,8 @@ original result, so fetch the current record again before a later edit.
 
 Set the coordination record to `blocked` when another session needs to know why
 work stopped, or `done` when that session activity is finished. Maintain the
-actual issue's status in Linear separately; herma performs no Linear synchronization.
+actual issue's status in your issue tracker separately; herma does not synchronize
+with it.
 
 ## Leave a useful handoff
 
@@ -133,13 +134,13 @@ context. Include these items when relevant:
 - **Checked:** checks run and their results; distinguish observations from guesses.
 - **Blocked:** the unresolved question, dependency or coordination conflict.
 - **Next:** one concrete next action and any scope the next session should respect.
-- **References:** the Linear issue, canonical memory/wiki page and related herma IDs.
+- **References:** the issue, canonical memory/wiki page and related herma IDs.
 
 ```sh
 herma --identity session-a create --kind note --project PROJECT_ID \
   --title 'Request-validation handoff' --body-file handoff.md \
   --tags handoff --links COORDINATION_ID \
-  --sources LINEAR_ISSUE_URL,COMMIT_URL,MEMORY_OR_WIKI_REFERENCE \
+  --sources ISSUE_URL,COMMIT_URL,MEMORY_OR_WIKI_REFERENCE \
   --request-id session-a-validation-handoff-1
 ```
 
