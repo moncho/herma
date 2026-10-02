@@ -98,7 +98,7 @@ func TestBoundContextAndSessionStartLoadFreshCoordination(t *testing.T) {
 			t.Fatal("context must distinguish record data from instructions")
 		}
 	}
-	check(runInput(t, context.Background(), "", "context"))
+	check(runInput(t, context.Background(), "", "context", "--format", "json"))
 	var envelope struct {
 		Hook struct {
 			Event   string `json:"hookEventName"`
@@ -129,13 +129,13 @@ func TestContextCLIRespectsBudgetAndDurableOptIn(t *testing.T) {
 	t.Setenv("HERMA_TOKEN", "token")
 	id := "rec_" + strings.Repeat("a", 32)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("include_durable") != "true" || r.URL.Query().Get("max_bytes") != "3072" {
+		if r.URL.Query().Get("include_durable") != "true" || r.URL.Query().Get("max_bytes") != "3072" || r.URL.Query().Has("format") || r.URL.Query().Has("principles") {
 			t.Errorf("wrong context query: %s", r.URL.RawQuery)
 		}
 		_, _ = io.WriteString(w, `{"project":{"id":"`+id+`"},"max_bytes":3072,"body":"`+strings.Repeat("x", 2800)+`"}`)
 	}))
 	defer server.Close()
-	data := runInput(t, context.Background(), "", "--url", server.URL, "context", "--project", id, "--max-bytes", "3072", "--include-durable")
+	data := runInput(t, context.Background(), "", "--url", server.URL, "context", "--project", id, "--max-bytes", "3072", "--include-durable", "--format", "json")
 	if len(data) > 3072 || bytes.Count(data, []byte("\n")) != 1 {
 		t.Fatal("CLI expanded the server's bounded JSON")
 	}
@@ -145,6 +145,44 @@ func TestContextCLIRespectsBudgetAndDurableOptIn(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "max-bytes") || out.Len() > 0 {
 			t.Fatalf("accepted invalid context budget %d: %v", budget, err)
 		}
+	}
+}
+
+// Before the service restarts on a new binary it rejects unknown query
+// parameters, so JSON requests must look exactly like they did before.
+func TestJSONContextWorksAgainstAServerThatRejectsNewParameters(t *testing.T) {
+	cleanEnv(t)
+	t.Setenv("HERMA_TOKEN", "token")
+	id := "rec_" + strings.Repeat("c", 32)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for name := range r.URL.Query() {
+			if name != "project_id" && name != "max_bytes" && name != "include_durable" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"error":{"message":"unknown query parameter `+name+`"}}`)
+				return
+			}
+		}
+		_, _ = io.WriteString(w, `{"project":{"id":"`+id+`"},"max_bytes":`+r.URL.Query().Get("max_bytes")+`,"body":"old server"}`)
+	}))
+	defer server.Close()
+	t.Setenv("HERMA_URL", server.URL)
+	data := runInput(t, context.Background(), "", "context", "--format", "json", "--project", id)
+	if !bytes.Contains(data, []byte("old server")) {
+		t.Fatalf("context failed against an older server: %s", data)
+	}
+	root := t.TempDir()
+	if _, err := project.Bind(root, project.Binding{ProjectID: id}); err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Hook struct {
+			Context string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	out := runInput(t, context.Background(), hookEvent(t, root), "hook", "session-start")
+	if err := json.Unmarshal(out, &envelope); err != nil || !strings.Contains(envelope.Hook.Context, "old server") {
+		t.Fatalf("hook lost context against an older server: %s", out)
 	}
 }
 
@@ -195,12 +233,12 @@ func TestHookInstallUsesAbsoluteCredentialsWithoutTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	runInput(t, context.Background(), "", "--credentials", credentials, "--identity", "session-a", "hook", "install", "--client", "both", "--dir", root)
-	for _, relative := range []string{".claude/settings.local.json", ".codex/hooks.json"} {
+	for relative, client := range map[string]string{".claude/settings.local.json": "claude", ".codex/hooks.json": "codex"} {
 		data, err := os.ReadFile(filepath.Join(root, relative))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if bytes.Contains(data, []byte("do-not-embed-this-token")) || !bytes.Contains(data, []byte(credentials)) || !bytes.Contains(data, []byte("session-a")) || !bytes.Contains(data, []byte("session-start")) {
+		if bytes.Contains(data, []byte("do-not-embed-this-token")) || !bytes.Contains(data, []byte(credentials)) || !bytes.Contains(data, []byte("session-a")) || !bytes.Contains(data, []byte("'session-start' '--client' '"+client+"'")) {
 			t.Fatalf("wrong generated command: %s", data)
 		}
 	}
@@ -294,7 +332,7 @@ func sessionStartWithBackups(t *testing.T, runner *backup.Runner, db *store.Stor
 		t.Fatal(err)
 	}
 	var result map[string]any
-	out := runInput(t, context.Background(), hookEvent(t, root), "hook", "session-start")
+	out := runInput(t, context.Background(), hookEvent(t, root), "hook", "session-start", "--client", "codex")
 	if err := json.Unmarshal(out, &result); err != nil {
 		t.Fatalf("hook output: %s", out)
 	}
@@ -333,5 +371,50 @@ func TestSessionStartWarnsOnlyWhenBackupsAreStale(t *testing.T) {
 	}
 	if result := sessionStartWithBackups(t, runner, db, true); result["systemMessage"] != nil {
 		t.Fatalf("failed status request warned: %v", result["systemMessage"])
+	}
+}
+
+func TestContextCLIPrintsTextByDefault(t *testing.T) {
+	cleanEnv(t)
+	t.Setenv("HERMA_TOKEN", "token")
+	id := "rec_" + strings.Repeat("b", 32)
+	packet := "herma context · project Demo (" + id + ") · 2026-10-02T09:00Z\nbody\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("format") != "text" || q.Get("principles") != "omit" || q.Get("max_bytes") != "10000" {
+			t.Errorf("wrong context query: %s", r.URL.RawQuery)
+		}
+		_, _ = io.WriteString(w, packet)
+	}))
+	defer server.Close()
+	data := runInput(t, context.Background(), "", "--url", server.URL, "context", "--project", id, "--principles", "omit")
+	if string(data) != packet {
+		t.Fatalf("CLI output = %q", data)
+	}
+	for _, args := range [][]string{{"--format", "xml"}, {"--principles", "changed"}} {
+		var out, errs bytes.Buffer
+		err := Run(context.Background(), append([]string{"--url", server.URL, "context", "--project", id}, args...), &out, &errs)
+		if err == nil || out.Len() > 0 {
+			t.Fatalf("accepted %v: %v", args, err)
+		}
+	}
+}
+
+func TestContextCLIRejectsIncompatibleTextResponses(t *testing.T) {
+	cleanEnv(t)
+	t.Setenv("HERMA_TOKEN", "token")
+	id := "rec_" + strings.Repeat("e", 32)
+	for name, body := range map[string]string{
+		"other project": "herma context · project Demo (rec_" + strings.Repeat("f", 32) + ") · now\n",
+		"over budget":   "herma context · project Demo (" + id + ") · now\n" + strings.Repeat("x", 3000) + "\n",
+		"not context":   "hello\n",
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, body) }))
+		var out, errs bytes.Buffer
+		err := Run(context.Background(), []string{"--url", server.URL, "context", "--project", id, "--max-bytes", "2048"}, &out, &errs)
+		server.Close()
+		if err == nil || out.Len() > 0 {
+			t.Fatalf("%s accepted: %q", name, out.String())
+		}
 	}
 }

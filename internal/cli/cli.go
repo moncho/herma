@@ -56,9 +56,10 @@ Commands:
   history ID
   project bind --project ID [--dir PATH] [--max-bytes N]
   hook install --client claude|codex|both [--dir PATH]
-  hook session-start           Load bounded project context for a SessionStart hook
+  hook session-start [--client claude|codex]  Load bounded project context for a SessionStart hook
   review [--limit N] [--offset N]  List proposed knowledge and principles awaiting review
-  context [--project ID] [--max-bytes N] [--include-durable]
+  context [--project ID] [--max-bytes N] [--include-durable] [--format text|json] [--principles include|omit]
+                               Compact session context (text by default)
   recall "words" [--project ID] [--include-proposed] [--limit N] [--max-bytes N]
                                Search reviewed knowledge and principles by relevance
   schema
@@ -70,7 +71,7 @@ The human reviewer accepts or rejects with update ID --version N --status accept
 Writes accept --request-id KEY for safe retries; write errors include the key used.
 Updates send only supplied fields. Record bodies may contain up to 64 KiB of UTF-8.
 Use COMMAND --help for command options; for update use update ID --help.
-Successful results are JSON on stdout; context uses compact JSON to honor its byte budget.
+Successful results are JSON on stdout, except context, which prints compact text within its byte budget (--format json for JSON).
 herma holds session coordination and reviewed durable knowledge (proposed by
 agents, accepted by the reviewer); real tasks stay in Linear. Errors and server logs go to stderr.
 `

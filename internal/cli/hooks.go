@@ -8,22 +8,33 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/moncho/herma/internal/backup"
+	"github.com/moncho/herma/internal/client"
 	"github.com/moncho/herma/internal/hooks"
 	"github.com/moncho/herma/internal/project"
+	"github.com/moncho/herma/internal/rules"
 	"github.com/moncho/herma/internal/store"
 )
 
 const hookTimeout = 5 * time.Second
 const maxHookInput = 64 << 10
 
+const (
+	claudeContextLimit    = 10000 // Claude Code's additionalContext cap, in characters
+	legacyDefaultMaxBytes = 12288 // herma's default before 10000
+	rulesLineAdvice       = 200
+	legacyHookWarning     = "herma: this SessionStart hook predates compact context; rerun herma hook install --client claude|codex in this repository."
+)
+
 func hook(ctx context.Context, cfg config, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: herma hook install --client claude|codex|both [--dir PATH] | herma hook session-start")
+		return errors.New("usage: herma hook install --client claude|codex|both [--dir PATH] | herma hook session-start [--client claude|codex]")
 	}
 	switch args[0] {
 	case "install":
@@ -31,10 +42,14 @@ func hook(ctx context.Context, cfg config, args []string, stdin io.Reader, stdou
 	case "session-start":
 		fs := flags("hook session-start", stderr)
 		requireToken := fs.Bool("require-token", false, "require HERMA_TOKEN; do not fall back to credentials")
+		client := fs.String("client", "", "claude or codex; omitted means the legacy JSON packet")
 		if err := parse(fs, args[1:]); err != nil {
 			return err
 		}
-		return sessionStart(ctx, cfg, *requireToken, stdin, stdout)
+		if *client != "" && *client != "claude" && *client != "codex" {
+			return errors.New("hook session-start --client must be claude or codex")
+		}
+		return sessionStart(ctx, cfg, *requireToken, *client, stdin, stdout)
 	default:
 		return fmt.Errorf("unknown hook command %q", args[0])
 	}
@@ -83,13 +98,12 @@ func installHook(cfg config, args []string, stdout, stderr io.Writer) error {
 		}
 		commandArgs = append(commandArgs, "--credentials", credentials, "--identity", cfg.identity)
 	}
-	commandArgs = append(commandArgs, "hook", "session-start")
-	if os.Getenv("HERMA_TOKEN") != "" {
-		commandArgs = append(commandArgs, "--require-token")
-	}
-	command, err := hooks.QuoteCommand(commandArgs)
-	if err != nil {
-		return err
+	command := func(client string) (string, error) {
+		args := append(append([]string{}, commandArgs...), "hook", "session-start", "--client", client)
+		if os.Getenv("HERMA_TOKEN") != "" {
+			args = append(args, "--require-token")
+		}
+		return hooks.QuoteCommand(args)
 	}
 	installations, err := hooks.Install(filepath.Dir(bindingPath), *agent, command)
 	if err != nil {
@@ -119,7 +133,7 @@ func installHook(cfg config, args []string, stdout, stderr io.Writer) error {
 
 // A missing binding is a quiet no-op. Other failures are visible warnings but
 // never block startup, request permission, or inject an unbounded error body.
-func sessionStart(ctx context.Context, cfg config, requireToken bool, stdin io.Reader, stdout io.Writer) error {
+func sessionStart(ctx context.Context, cfg config, requireToken bool, client string, stdin io.Reader, stdout io.Writer) error {
 	data, err := io.ReadAll(io.LimitReader(stdin, maxHookInput+1))
 	if err != nil || len(data) > maxHookInput {
 		return hookWarning(stdout, "herma context unavailable: could not read the SessionStart event.")
@@ -131,7 +145,7 @@ func sessionStart(ctx context.Context, cfg config, requireToken bool, stdin io.R
 	if err := json.Unmarshal(data, &event); err != nil || event.Event != "SessionStart" || !filepath.IsAbs(event.Cwd) {
 		return hookWarning(stdout, "herma context unavailable: expected a SessionStart event with an absolute cwd.")
 	}
-	binding, _, err := project.Discover(event.Cwd)
+	binding, bindingPath, err := project.Discover(event.Cwd)
 	if errors.Is(err, project.ErrNoBinding) {
 		return nil
 	}
@@ -148,19 +162,117 @@ func sessionStart(ctx context.Context, cfg config, requireToken bool, stdin io.R
 	}
 	ctx, cancel := context.WithTimeout(ctx, hookTimeout)
 	defer cancel()
-	data, err = cfg.contextData(ctx, binding.ProjectID, binding.MaxBytes, false)
+	data, warnings, err := sessionContext(ctx, cfg, client, binding, filepath.Dir(bindingPath))
 	if err != nil {
-		return hookWarning(stdout, "herma context unavailable: check the service and credentials with herma context from this repository. Session startup will continue.")
+		return hookWarning(stdout, "herma context unavailable: check the service (restart herma serve after upgrading herma) and credentials with herma context from this repository. Session startup will continue.")
 	}
 	// The decoded additionalContext string, including its scope/trust metadata,
-	// stays within the binding's byte budget. JSON escaping is only transport.
+	// stays within the hook's byte budget. JSON escaping is only transport.
 	result := map[string]any{"hookSpecificOutput": map[string]string{
 		"hookEventName": "SessionStart", "additionalContext": string(bytes.TrimSpace(data)),
 	}}
 	if warning := backupWarning(ctx, cfg); warning != "" {
-		result["systemMessage"] = warning
+		warnings = append(warnings, warning)
+	}
+	if len(warnings) > 0 {
+		result["systemMessage"] = strings.Join(warnings, "\n")
 	}
 	return output(stdout, result)
+}
+
+// sessionContext selects the packet for the hook's client. Claude reads
+// principles from the rules file; Codex and legacy hooks get them inline.
+func sessionContext(ctx context.Context, cfg config, client string, binding project.Binding, checkout string) ([]byte, []string, error) {
+	switch client {
+	case "claude":
+		return claudeContext(ctx, cfg, binding, checkout)
+	case "codex":
+		data, err := cfg.contextData(ctx, contextRequest{ID: binding.ProjectID, Budget: binding.MaxBytes, Format: "text", Principles: "include"})
+		return data, nil, err
+	default:
+		// Legacy hooks are usually Claude's; its old 12288 default overflows the cap.
+		budget := binding.MaxBytes
+		if budget == legacyDefaultMaxBytes {
+			budget = claudeContextLimit
+		}
+		data, err := cfg.contextData(ctx, contextRequest{ID: binding.ProjectID, Budget: budget, Format: "json", Principles: "include"})
+		return data, []string{legacyHookWarning}, err
+	}
+}
+
+// claudeContext keeps the rules file current. Claude Code reads it before this
+// hook runs, so a changed file is also delivered once in the packet.
+func claudeContext(ctx context.Context, cfg config, binding project.Binding, checkout string) ([]byte, []string, error) {
+	var warnings []string
+	budget := binding.MaxBytes
+	if budget > claudeContextLimit {
+		budget = claudeContextLimit
+	}
+	if binding.MaxBytes > claudeContextLimit && binding.MaxBytes != legacyDefaultMaxBytes {
+		warnings = append(warnings, fmt.Sprintf("herma: this repository's max_bytes (%d) exceeds Claude Code's 10,000-character hook limit; using %d. Set max_bytes to %d in .herma-project.json to silence this.", binding.MaxBytes, claudeContextLimit, claudeContextLimit))
+	}
+	principles, err := cfg.principlesFile(ctx, binding.ProjectID)
+	if err != nil {
+		// Only a project_unavailable error (the project is archived or no
+		// longer exists) removes the herma-generated file, so its principles stop
+		// applying. Every other failure, including 401, 403, an older server's
+		// 404 for the route, 5xx and network errors, keeps the file.
+		var apiErr *client.APIError
+		if errors.As(err, &apiErr) && apiErr.Code == "project_unavailable" {
+			_, _ = rules.Sync(checkout, nil)
+		}
+		return nil, nil, err
+	}
+	mode := "omit"
+	if isHomeDir(checkout) {
+		// Rules under ~/.claude apply to every Claude session, not this project.
+		mode = "include"
+		warnings = append(warnings, "herma: this binding is in your home directory, where "+rules.Path+" would apply to every Claude session; principles are in the session context instead.")
+	} else if changed, err := rules.Sync(checkout, principles); err != nil {
+		// Claude may have loaded a stale file; say these principles replace it.
+		mode = "replace"
+		warnings = append(warnings, "herma: could not write "+rules.Path+" ("+err.Error()+"); principles are in the session context instead.")
+	} else if changed {
+		mode = "changed"
+	}
+	if lines := bytes.Count(principles, []byte{'\n'}); lines > rulesLineAdvice {
+		warnings = append(warnings, fmt.Sprintf("herma: %s has %d lines; Claude Code follows rules files best under 200 lines. Consider fewer or shorter principles.", rules.Path, lines))
+	}
+	data, err := cfg.contextData(ctx, contextRequest{ID: binding.ProjectID, Budget: budget, Format: "text", Principles: mode})
+	return data, warnings, err
+}
+
+// isHomeDir reports whether dir is the user's home directory after resolving
+// symlinks. An unknown home directory is treated as not matching.
+func isHomeDir(dir string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return false
+	}
+	home, err = filepath.EvalSymlinks(home)
+	if err != nil {
+		return false
+	}
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return false
+	}
+	return filepath.Clean(home) == filepath.Clean(resolved)
+}
+
+func (cfg config) principlesFile(ctx context.Context, id string) ([]byte, error) {
+	c, err := cfg.client()
+	if err != nil {
+		return nil, err
+	}
+	data, err := c.Text(ctx, "/v1/principles", url.Values{"project_id": {id}})
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > 0 && !bytes.HasPrefix(data, []byte(rules.Header)) {
+		return nil, errors.New("server returned an incompatible principles response; update the herma service")
+	}
+	return data, nil
 }
 
 // backupWarning returns a one-line warning when automatic backups are enabled

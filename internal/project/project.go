@@ -15,7 +15,7 @@ import (
 
 const (
 	FileName        = ".herma-project.json"
-	DefaultMaxBytes = 12288
+	DefaultMaxBytes = 10000
 	MinMaxBytes     = 2048
 	MaxMaxBytes     = 65536
 	maxFileBytes    = 64 << 10

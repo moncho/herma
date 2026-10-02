@@ -49,7 +49,7 @@ func TestReviewWorkflowAcrossRoles(t *testing.T) {
 		t.Fatalf("agent edit of accepted record: %v", err)
 	}
 
-	data, err = runCLI(t, "context", "--project", project.ID, "--include-durable")
+	data, err = runCLI(t, "context", "--project", project.ID, "--include-durable", "--format", "json")
 	var packet struct {
 		Knowledge []store.Record `json:"knowledge"`
 	}

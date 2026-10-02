@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -175,5 +176,32 @@ func TestSocketClientTalksOverUnixSocketAndReportsMissingServer(t *testing.T) {
 	}
 	if _, err := NewSocket("relative.sock", "socket-token"); err == nil {
 		t.Fatal("accepted a relative socket path")
+	}
+}
+
+func TestTextReturnsNonJSONBodiesAndKeepsErrorEnvelopes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer token" {
+			t.Errorf("missing credentials")
+		}
+		if r.URL.Path == "/missing" {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"error":{"code":"not_found","message":"no such thing"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, "herma context · project\n")
+	}))
+	defer server.Close()
+	c, err := New(server.URL, "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := c.Text(context.Background(), "/v1/context", url.Values{"format": {"text"}})
+	if err != nil || string(data) != "herma context · project\n" {
+		t.Fatalf("Text = %q, %v", data, err)
+	}
+	var apiErr *APIError
+	if _, err := c.Text(context.Background(), "/missing", nil); !errors.As(err, &apiErr) || apiErr.Status != http.StatusNotFound || apiErr.Code != "not_found" {
+		t.Fatalf("error envelope lost: %v", err)
 	}
 }

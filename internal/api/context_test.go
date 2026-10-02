@@ -260,7 +260,7 @@ func TestConcurrentContextRequestsKeepIndependentBudgets(t *testing.T) {
 	}
 }
 
-func TestContextPrinciplesUseAtMostAQuarterAndYieldUnusedSpace(t *testing.T) {
+func TestContextPrinciplesUseAtMostHalfAndYieldUnusedSpace(t *testing.T) {
 	h, s := apiTestHandler(t, nil)
 	project := createContextRecord(t, s, store.CreateInput{Kind: "project", Title: "Principled"})
 	for i := 0; i < 20; i++ {
@@ -276,7 +276,7 @@ func TestContextPrinciplesUseAtMostAQuarterAndYieldUnusedSpace(t *testing.T) {
 		data, _ := json.Marshal(p)
 		principleBytes += len(data) + 1
 	}
-	if len(packet.Principles) == 0 || principleBytes > budget/4 || packet.Omitted.Principles != 20-len(packet.Principles) || len(packet.Tasks) == 0 {
+	if len(packet.Principles) == 0 || principleBytes > budget/2 || principleBytes <= budget/4 || packet.Omitted.Principles != 20-len(packet.Principles) || len(packet.Tasks) == 0 {
 		t.Fatalf("principles %d (%d bytes, omitted %d), tasks %d", len(packet.Principles), principleBytes, packet.Omitted.Principles, len(packet.Tasks))
 	}
 	// With one tiny principle, coordination gets the unused principle share.

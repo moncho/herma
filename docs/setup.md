@@ -90,7 +90,7 @@ elsewhere. Replace `PROJECT_ID` with the ID returned by the first command:
 
 ```sh
 herma create --kind project --title 'My repository' --status active
-herma project bind --project PROJECT_ID --max-bytes 12288
+herma project bind --project PROJECT_ID --max-bytes 10000
 herma --credentials /absolute/path/credentials.json --identity local-agent \
   hook install --client both
 ```
@@ -106,7 +106,13 @@ executable in future sessions.
 Use `--client claude` or `--client codex` to install for one client. Installation
 merges a synchronous SessionStart hook into `.claude/settings.local.json` and/or
 `.codex/hooks.json`, preserving existing settings and other hooks. Repeating
-installation updates herma's own hook without duplicating it. Commands capture the
+installation updates herma's own hook without duplicating it. Each client's hook
+runs `herma hook session-start --client <client>`; rerun `herma hook install` after
+upgrading herma so existing hooks gain the flag. When upgrading, restart
+`herma serve` on the new binary first, then rerun `herma hook install`, so hooks never
+talk to an older server. Bindings still at the old 12,288-byte default are
+clamped to 10,000 for Claude without a warning; other values above 10,000 warn
+on each session until lowered. Commands capture the
 executable, service URL and credential-file path, never a token. Keep these
 machine-specific hook files local; the generated `.herma-project.json` contains only
 the project ID and budget and can be committed for other sessions/worktrees.
@@ -125,15 +131,19 @@ install local hooks there. An invalid nearby binding produces a warning instead
 of silently falling back. To change a binding, edit its project ID/budget
 explicitly; `project bind` will not overwrite a different existing configuration.
 
-The startup hook is read-only, has a five-second request deadline, and continues
-with a short warning if the service, credentials or binding are unavailable.
+The Codex and legacy startup hooks only read. The Claude hook writes and removes
+only herma's generated `.claude/rules/herma/principles.md` (creating its `.gitignore`
+when absent). Every hook has a five-second request deadline and continues with a
+short warning if the service, credentials or binding are unavailable.
 Unbound projects are a quiet no-op. Token-based installs inherit `HERMA_TOKEN` from
 the agent environment and warn if it is missing, without falling back to another
 identity. Named-identity installs require `HERMA_TOKEN` to be unset. No MCP server
 is needed for this automatic loading path.
 
-Each session also receives the project's accepted principles and a hint to use
-`herma recall` for other reviewed knowledge.
+Each session also gets the project's accepted principles: Claude loads them
+from the generated `.claude/rules/herma/principles.md`, and Codex receives them in
+the hook context. Both get a hint to use `herma recall` for other reviewed
+knowledge.
 
 After binding, `herma context` works without repeating the project ID. Context
 refreshes at session boundaries; run it again during a long session before

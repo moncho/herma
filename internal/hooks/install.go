@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	HookID         = "herma-session-start-v1"
-	marker         = " # herma-managed:session-start:v1"
+	HookID         = "herma-session-start-v2"
+	marker         = " # herma-managed:session-start:v2"
+	legacyMarker   = " # herma-managed:session-start:v1"
 	maxConfigBytes = 2 << 20
 )
 
@@ -56,15 +57,12 @@ type plan struct {
 }
 
 // Install creates or updates the managed SessionStart hook for claude, codex,
-// or both. command must already be safely quoted (normally with QuoteCommand).
+// or both. command returns the safely quoted command (normally from QuoteCommand) for each client.
 // The stable shell-comment marker identifies only this installer's own entry.
 // Existing malformed JSON, duplicate keys, and symlink destinations are errors.
 // File replacements are individually atomic; a rare commit failure may return
 // already-completed installations alongside its error.
-func Install(dir, client, command string) ([]Installation, error) {
-	if strings.TrimSpace(command) == "" || strings.ContainsAny(command, "\x00\r\n") || !utf8.ValidString(command) || strings.Contains(command, "herma-managed:session-start:") {
-		return nil, errors.New("hook command must be nonempty, single-line, and contain no managed hook marker")
-	}
+func Install(dir, client string, command func(client string) (string, error)) ([]Installation, error) {
 	var plans []plan
 	switch client {
 	case "claude":
@@ -101,11 +99,18 @@ func Install(dir, client, command string) ([]Installation, error) {
 	}
 	for i := range plans {
 		p := &plans[i]
+		cmd, err := command(p.client)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(cmd) == "" || strings.ContainsAny(cmd, "\x00\r\n") || !utf8.ValidString(cmd) || strings.Contains(cmd, "herma-managed:session-start:") {
+			return nil, errors.New("hook command must be nonempty, single-line, and contain no managed hook marker")
+		}
 		p.before, p.info, err = readConfig(root, p.path)
 		if err != nil {
 			return nil, fmt.Errorf("inspect %s: %w", filepath.Join(abs, p.path), err)
 		}
-		p.after, err = merge(p.before, p.client, command+marker)
+		p.after, err = merge(p.before, p.client, cmd+marker)
 		if err != nil {
 			return nil, fmt.Errorf("invalid hook configuration %s: %w", filepath.Join(abs, p.path), err)
 		}
@@ -325,7 +330,7 @@ func merge(data []byte, client, command string) ([]byte, error) {
 			if !strings.Contains(cmd, "herma-managed:session-start:") {
 				continue
 			}
-			if !strings.HasSuffix(cmd, marker) || kind != "command" || len(handlers) != 1 || managed >= 0 {
+			if !(strings.HasSuffix(cmd, marker) || strings.HasSuffix(cmd, legacyMarker)) || kind != "command" || len(handlers) != 1 || managed >= 0 {
 				return nil, errors.New("managed herma hook has a conflicting marker or shares a group; separate or remove that entry before reinstalling")
 			}
 			for _, key := range group.keys {

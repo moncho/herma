@@ -115,35 +115,42 @@ history and export. There is no hard-delete endpoint.
 
 ## Session context
 
-`herma context` (or `herma context --project ID`) returns:
+`herma context` (or `herma context --project ID`) prints compact text: a header line,
+the trust and recall lines, then sections for accepted principles, open
+coordination tasks, unresolved feedback, recent handoff notes and (with
+`--include-durable`) accepted knowledge. Empty sections are left out; a closing
+line lists omitted and clipped records. `--format json` prints the API's JSON
+packet instead, and `--principles omit` leaves principles out.
 
-- The unarchived project.
-- Accepted principles, project and global, always included first and limited to
-  at most a quarter of the budget.
-- Session coordination records (`task`) in `open`, `in_progress` or `blocked` state.
-- Recent handoff notes and unresolved coordination feedback.
-- A `recall` hint pointing at `herma recall` for other reviewed knowledge.
+The whole response is capped at **10,000 bytes by default** in either format.
+Use `--max-bytes N` (2–64 KiB), or set `max_bytes` in the project binding.
+Principles come first and may use at most half of the budget; coordination gets
+whatever they leave. Each record preview uses at most 2 KiB or a quarter of the
+budget, whichever is smaller.
 
-The entire compact JSON response, including metadata and newline, is capped at
-**12 KiB by default**. Use `--max-bytes N` (2–64 KiB), or set `max_bytes` in the
-project binding. The API accepts the same `max_bytes` query parameter. This is an
-exact byte budget, not an estimated token count; CLI formatting does not expand it.
-Each individual record preview uses at most 2 KiB or a quarter of the packet
-budget, whichever is smaller, so one long body cannot crowd out every other item.
+In Claude Code, the SessionStart hook writes accepted principles to
+`.claude/rules/herma/principles.md` in the checkout (next to a `.gitignore`
+containing `*`), so they load as project rules on every start, resume and
+compaction without using hook space. The hook's packet then carries only
+coordination, plus the principles once when they have changed since the session
+loaded the file. Claude Code caps hook context at 10,000 characters, so the
+Claude hook never asks for more than 10,000 bytes.
 
-Coordination records and blockers take priority over handoff notes; recent notes
-come before optional durable content. Context contains summaries: `truncated`,
-per-category `omitted` counts, `body_truncated` and `truncated_fields` report what
-was clipped or left out. Use `get ID` to retrieve a complete, fresh record before
-editing, or filtered/paginated `list` for omitted items. A 100-record candidate
-limit per category also bounds query work; it does not define the text budget.
+If the binding is in your home directory, Claude receives the principles in the
+hook context instead of a rules file. If the rules file cannot be updated, the
+hook context carries them marked as replacing it. Either way a warning explains
+why.
+
+To stop using herma in a checkout, delete `.herma-project.json` and
+`.claude/rules/herma/`; an archived project's rules file is removed at the next
+session start.
 
 Other projects, archived records and accepted knowledge are excluded by
 default. `context --include-durable` adds accepted knowledge after the
 principles; proposed, rejected and superseded records never enter context and are
 available through `get`, `list`, search and export. The automatic startup hook
-does not include knowledge: it loads principles and the `recall` hint, and
-`herma recall` finds the rest.
+does not include knowledge: it carries the `recall` hint (and, for Codex or
+when they changed, principles), and `herma recall` finds the rest.
 
 ## Recall
 
