@@ -5,7 +5,7 @@
 | Kind | Purpose | Statuses, with the default first |
 | --- | --- | --- |
 | `project` | Repository or shared session coordination scope | `planned`, `active`, `paused`, `completed` |
-| `task` | Session working intent, ownership and blockers; link the real Linear issue | `open`, `in_progress`, `blocked`, `done` |
+| `task` | Session working intent, ownership and blockers; link the real issue | `open`, `in_progress`, `blocked`, `done` |
 | `note` | An immutable handoff: changes, checks, next action and references | `published` |
 | `feedback` | Unresolved coordination friction or blocker | `open`, `triaged`, `resolved` |
 | `knowledge` | Durable knowledge; reviewed before it counts | `proposed`, `accepted`, `rejected`, `superseded` |
@@ -64,7 +64,7 @@ The CLI sends reviewer commands over the socket next to the credentials file
 ./bin/herma --identity session-a create --kind task \
   --project PROJECT_ID --title 'Session A is editing the API' --priority 4 \
   --body 'Working in internal/api; please coordinate overlapping edits here.' \
-  --status in_progress --owner session-a --sources LINEAR_ISSUE_URL \
+  --status in_progress --owner session-a --sources ISSUE_URL \
   --request-id api-session-a-start-1
 
 # A fresh session receives a bounded context packet.
@@ -74,7 +74,7 @@ The CLI sends reviewer commands over the socket next to the credentials file
 ./bin/herma --identity session-a create --kind note \
   --project PROJECT_ID --title 'API handoff' --tags handoff \
   --body 'Changed request validation. Race tests pass. Next: review the retry path.' \
-  --links COORDINATION_ID --sources LINEAR_ISSUE_URL,COMMIT_URL
+  --links COORDINATION_ID --sources ISSUE_URL,COMMIT_URL
 
 ./bin/herma history COORDINATION_ID
 ./bin/herma list --project PROJECT_ID --kind task --status open

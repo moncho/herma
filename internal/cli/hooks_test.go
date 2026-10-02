@@ -64,7 +64,7 @@ func TestBoundContextAndSessionStartLoadFreshCoordination(t *testing.T) {
 	}
 	p := create(store.CreateInput{Kind: "project", Title: "Session coordination"})
 	create(store.CreateInput{Kind: "knowledge", Title: "Durable wiki fact", ProjectID: p.ID, Status: "accepted", Sources: []string{"https://example.com/review"}})
-	create(store.CreateInput{Kind: "task", Title: "Session A edits the API", ProjectID: p.ID, Status: "in_progress", Owner: "session-a", Sources: []string{"https://linear.app/example/issue/EX-123"}})
+	create(store.CreateInput{Kind: "task", Title: "Session A edits the API", ProjectID: p.ID, Status: "in_progress", Owner: "session-a", Sources: []string{"https://issues.example/EX-123"}})
 	note := create(store.CreateInput{Kind: "note", Title: "Latest handoff", Body: strings.Repeat("引き継ぎ🙂", 500), ProjectID: p.ID})
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0700); err != nil {

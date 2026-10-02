@@ -57,7 +57,7 @@ func requestContext(t *testing.T, h http.Handler, projectID, extraQuery string, 
 func TestContextDefaultsToCoordinationAndPrinciplesAndOptsInKnowledge(t *testing.T) {
 	h, s := apiTestHandler(t, nil)
 	project := createContextRecord(t, s, store.CreateInput{Kind: "project", Title: "Session coordination", Body: "Current handoff scope."})
-	task := createContextRecord(t, s, store.CreateInput{Kind: "task", Title: "Next session intention", Body: "Continue the investigation.", ProjectID: project.ID, Owner: "next-session", Sources: []string{"https://linear.app/example/issue/ONE"}})
+	task := createContextRecord(t, s, store.CreateInput{Kind: "task", Title: "Next session intention", Body: "Continue the investigation.", ProjectID: project.ID, Owner: "next-session", Sources: []string{"https://issues.example/ONE"}})
 	feedback := createContextRecord(t, s, store.CreateInput{Kind: "feedback", Title: "Follow up", ProjectID: project.ID})
 	note := createContextRecord(t, s, store.CreateInput{Kind: "note", Title: "Handoff", Body: "The latest experiment is in the workspace.", ProjectID: project.ID})
 	knowledge := createContextRecord(t, s, store.CreateInput{Kind: "knowledge", Title: "Durable memory entry", Status: "accepted", Sources: []string{"https://example.com/review"}})

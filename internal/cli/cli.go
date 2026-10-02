@@ -73,7 +73,7 @@ Updates send only supplied fields. Record bodies may contain up to 64 KiB of UTF
 Use COMMAND --help for command options; for update use update ID --help.
 Successful results are JSON on stdout, except context, which prints compact text within its byte budget (--format json for JSON).
 herma holds session coordination and reviewed durable knowledge (proposed by
-agents, accepted by the reviewer); real tasks stay in Linear. Errors and server logs go to stderr.
+agents, accepted by the reviewer); real tasks stay in your issue tracker. Errors and server logs go to stderr.
 `
 
 type config struct {

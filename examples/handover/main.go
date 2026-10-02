@@ -72,11 +72,12 @@ func run() error {
 		return err
 	}
 	// This is an illustrative reference only. The example makes no requests to
-	// Linear and leaves canonical issue status and durable knowledge elsewhere.
-	const issueReference = "https://linear.app/example/issue/DEMO-1"
+	// an issue tracker and leaves canonical issue status and durable knowledge
+	// elsewhere.
+	const issueReference = "https://issues.example/DEMO-1"
 	initialNote, err := create(a, "initial-note", store.CreateInput{
 		Kind: "note", Title: "Session A handoff", ProjectID: project.ID,
-		Body: "Changed: Prepared this demo handoff.\nChecked: Session A can write coordination context.\nNext: Session B should retrieve the handoff and finish the coordination check.\nReferences: The Linear URL is a placeholder; durable decisions belong in memory files or the wiki.",
+		Body: "Changed: Prepared this demo handoff.\nChecked: Session A can write coordination context.\nNext: Session B should retrieve the handoff and finish the coordination check.\nReferences: The issue URL is a placeholder; durable decisions belong in memory files or the wiki.",
 		Tags: []string{"demo", "handoff"}, Sources: []string{issueReference},
 	})
 	if err != nil {
@@ -84,7 +85,7 @@ func run() error {
 	}
 	task, err := create(a, "task", store.CreateInput{
 		Kind: "task", Title: "Session A is preparing the demo handoff", ProjectID: project.ID,
-		Body:   "Working intent: preparing this project's session handoff. Session B should inspect the handoff, finish this coordination check, and leave an outcome note. The real issue and its status stay in Linear.",
+		Body:   "Working intent: preparing this project's session handoff. Session B should inspect the handoff, finish this coordination check, and leave an outcome note. The real issue and its status stay in the issue tracker.",
 		Status: "in_progress", Owner: "session-a", Priority: 4,
 		Links: []string{initialNote.ID}, Tags: []string{"demo"}, Sources: []string{issueReference},
 	})
@@ -126,7 +127,7 @@ func run() error {
 	}
 	note, err := create(b, "final-note", store.CreateInput{
 		Kind: "note", Title: "Session B handoff outcome", ProjectID: project.ID,
-		Body:  "Changed: Session B retrieved session A's handoff and finished the coordination check.\nChecked: Read the complete coordination record before updating its version.\nNext: Use this example's pattern for session handoffs.\nReferences: No Linear issue was updated; durable knowledge stays in memory files or the wiki.",
+		Body:  "Changed: Session B retrieved session A's handoff and finished the coordination check.\nChecked: Read the complete coordination record before updating its version.\nNext: Use this example's pattern for session handoffs.\nReferences: No issue was updated; durable knowledge stays in memory files or the wiki.",
 		Links: []string{initialNote.ID, task.ID}, Tags: []string{"demo", "handoff"}, Sources: []string{issueReference},
 	})
 	if err != nil {

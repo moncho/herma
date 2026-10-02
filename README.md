@@ -20,8 +20,8 @@ know, and a reviewed store of knowledge that outlives any single session.
   database server, hosted account or model API key. `herma serve` can snapshot the
   database into a folder your sync tool already copies off the machine.
 
-Real tasks stay in Linear; herma links to them rather than duplicating them. herma is
-a new, independent project inspired by the
+Real tasks stay in your issue tracker; herma links to them rather than duplicating
+them. herma is a new, independent project inspired by the
 [external knowledge base described in The Ground Truth](https://thegroundtruth.media/i/217789967/external-knowledge-base).
 
 ## How it works
