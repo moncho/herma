@@ -15,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 const maxResponseBytes = 16 << 20
@@ -76,6 +77,30 @@ func (e *APIError) Error() string {
 }
 
 func (c *Client) Do(ctx context.Context, method, path string, query url.Values, input any, requestID string) (json.RawMessage, error) {
+	data, err := c.do(ctx, method, path, query, input, requestID, "application/json")
+	if err != nil {
+		return nil, err
+	}
+	if !json.Valid(data) {
+		return nil, errors.New("server returned an invalid JSON response")
+	}
+	return json.RawMessage(data), nil
+}
+
+// Text performs a GET for a text response, such as the compact context or the
+// rendered principles file. Errors still use the server's JSON error envelope.
+func (c *Client) Text(ctx context.Context, path string, query url.Values) ([]byte, error) {
+	data, err := c.do(ctx, http.MethodGet, path, query, nil, "", "text/plain, text/markdown")
+	if err != nil {
+		return nil, err
+	}
+	if !utf8.Valid(data) {
+		return nil, errors.New("server returned an invalid UTF-8 response")
+	}
+	return data, nil
+}
+
+func (c *Client) do(ctx context.Context, method, path string, query url.Values, input any, requestID, accept string) ([]byte, error) {
 	var body io.Reader
 	if input != nil {
 		data, err := json.Marshal(input)
@@ -93,7 +118,7 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 		return nil, fmt.Errorf("prepare request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", accept)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -135,8 +160,5 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 		}
 		return nil, &APIError{Status: resp.StatusCode, Code: envelope.Error.Code, Message: envelope.Error.Message}
 	}
-	if !json.Valid(data) {
-		return nil, errors.New("server returned an invalid JSON response")
-	}
-	return json.RawMessage(data), nil
+	return data, nil
 }

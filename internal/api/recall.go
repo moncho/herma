@@ -62,7 +62,7 @@ func packRecall(query, projectID string, includeProposed bool, records []store.R
 		if available <= 0 {
 			break
 		}
-		preview, fits := fitContextRecord(record, available)
+		preview, fits := fitContextRecord(record, available, contextRecordSize)
 		if !fits {
 			break
 		}

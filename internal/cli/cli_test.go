@@ -295,7 +295,7 @@ func TestFreshAgentCLIWorkflowAndRetry(t *testing.T) {
 		Tasks     []store.Record `json:"tasks"`
 		Knowledge []store.Record `json:"knowledge"`
 	}
-	if err := json.Unmarshal(runCommand("context", "--project", project.ID), &contextResult); err != nil {
+	if err := json.Unmarshal(runCommand("context", "--project", project.ID, "--format", "json"), &contextResult); err != nil {
 		t.Fatal(err)
 	}
 	if len(contextResult.Tasks) != 1 || len(contextResult.Knowledge) != 0 || contextResult.Tasks[0].ID != task.ID {

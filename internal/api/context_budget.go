@@ -47,17 +47,46 @@ type projectContext struct {
 	IncludeDurable bool            `json:"include_durable"`
 	Truncated      bool            `json:"truncated"`
 	Omitted        contextCounts   `json:"omitted"`
+	// PrinciplesLabel is "changed" when principles replace the rules file a
+	// Claude session already loaded, or "replace" when herma could not update that
+	// file. Only the text format shows it.
+	PrinciplesLabel string `json:"-"`
+}
+
+// contextFormat renders a packed context and measures one record preview, and
+// the project preview, in the same representation, so every budget decision
+// counts the bytes sent.
+type contextFormat interface {
+	encode(projectContext) ([]byte, error)
+	recordSize(contextRecord) int
+	projectSize(contextRecord) int
+	contentType() string
+}
+
+type jsonFormat struct{}
+
+func (jsonFormat) encode(c projectContext) ([]byte, error) { return encodeContext(c) }
+func (jsonFormat) recordSize(r contextRecord) int          { return contextRecordSize(r) }
+func (jsonFormat) projectSize(r contextRecord) int         { return contextRecordSize(r) }
+func (jsonFormat) contentType() string                     { return "application/json; charset=utf-8" }
+
+type contextOptions struct {
+	budget          int
+	includeDurable  bool
+	format          contextFormat
+	principlesLabel string
 }
 
 // packContext counts the actual wire representation, including JSON escaping,
 // all metadata and the final newline. A single huge record cannot consume the
 // packet: each preview may use at most a quarter of the budget or 2 KiB.
-func packContext(snapshot contextSnapshot, budget int, includeDurable bool) ([]byte, error) {
+func packContext(snapshot contextSnapshot, opts contextOptions) ([]byte, error) {
+	budget, includeDurable := opts.budget, opts.includeDurable
 	if budget < minContextBytes || budget > maxContextBytes {
 		return nil, errors.New("invalid context budget")
 	}
 	recordBudget := min(2048, budget/4)
-	project, ok := fitContextRecord(snapshot.Project, recordBudget)
+	project, ok := fitContextRecord(snapshot.Project, recordBudget, opts.format.projectSize)
 	if !ok {
 		return nil, errors.New("project identity does not fit the context budget")
 	}
@@ -66,13 +95,14 @@ func packContext(snapshot contextSnapshot, budget int, includeDurable bool) ([]b
 		Tasks: []contextRecord{}, Feedback: []contextRecord{}, Notes: []contextRecord{},
 		Knowledge: []contextRecord{}, Principles: []contextRecord{},
 		MaxBytes: budget, IncludeDurable: includeDurable, Omitted: snapshot.Totals,
+		PrinciplesLabel: opts.principlesLabel,
 	}
 	if !includeDurable {
 		result.Omitted.Knowledge = 0
 	}
 	clipped := recordClipped(project)
 	result.Truncated = clipped || result.Omitted.any()
-	data, err := encodeContext(result)
+	data, err := opts.format.encode(result)
 	if err != nil || len(data) > budget {
 		return nil, errors.New("project context metadata does not fit the context budget")
 	}
@@ -87,37 +117,43 @@ func packContext(snapshot contextSnapshot, budget int, includeDurable bool) ([]b
 		// Reserve one byte for a new array comma and one for true -> false if
 		// this completes an otherwise untruncated packet. Omission counts only shrink.
 		available := min(recordBudget, limit-len(data)-2)
-		if available <= 0 {
-			return false, nil
-		}
-		record, fits := fitContextRecord(c.record, available)
-		if !fits {
-			return true, nil
-		}
-		*c.target = append(*c.target, record)
-		*c.omitted--
-		previousClipped := clipped
-		clipped = clipped || recordClipped(record)
-		result.Truncated = clipped || result.Omitted.any()
-		next, err := encodeContext(result)
-		if err != nil {
-			return false, err
-		}
-		if len(next) > limit {
+		// The text format may also add a section heading and footer entries, so a
+		// record clipped to available can still overflow. Retry with the overflow
+		// subtracted rather than dropping a record that could be clipped to fit.
+		for attempt := 0; attempt < 3; attempt++ {
+			if available <= 0 {
+				return attempt > 0, nil
+			}
+			record, fits := fitContextRecord(c.record, available, opts.format.recordSize)
+			if !fits {
+				return true, nil
+			}
+			*c.target = append(*c.target, record)
+			*c.omitted--
+			previousClipped := clipped
+			clipped = clipped || recordClipped(record)
+			result.Truncated = clipped || result.Omitted.any()
+			next, err := opts.format.encode(result)
+			if err != nil {
+				return false, err
+			}
+			if len(next) <= limit {
+				data = next
+				return true, nil
+			}
 			// Keep the final check independent of size-estimation assumptions.
 			*c.target = (*c.target)[:len(*c.target)-1]
 			*c.omitted++
 			clipped = previousClipped
 			result.Truncated = clipped || result.Omitted.any()
-			return true, nil
+			available -= len(next) - limit
 		}
-		data = next
 		return true, nil
 	}
 	// Principles are conventions every session follows, so they go first, but
-	// they may grow the packet by at most a quarter of the budget.
+	// they may grow the packet by at most half of the budget.
 	// The clamp keeps the hard max_bytes guarantee independent of metadata size.
-	principleLimit := min(budget, len(data)+budget/4)
+	principleLimit := min(budget, len(data)+budget/2)
 	for _, record := range snapshot.Principles {
 		if more, err := add(candidate{record, &result.Principles, &result.Omitted.Principles}, principleLimit); err != nil {
 			return nil, err
@@ -170,7 +206,7 @@ func recordClipped(record contextRecord) bool {
 	return record.BodyTruncated || len(record.TruncatedFields) > 0
 }
 
-func fitContextRecord(record store.Record, budget int) (contextRecord, bool) {
+func fitContextRecord(record store.Record, budget int, size func(contextRecord) int) (contextRecord, bool) {
 	out := contextRecord{
 		ID: record.ID, Kind: record.Kind, Title: record.Title, Body: record.Body,
 		Status: record.Status, Version: record.Version, Priority: record.Priority,
@@ -178,7 +214,7 @@ func fitContextRecord(record store.Record, budget int) (contextRecord, bool) {
 		UpdatedAt: &record.UpdatedAt, Sources: record.Sources, Links: record.Links,
 		ReviewedBy: record.ReviewedBy, ReviewedAt: record.ReviewedAt,
 	}
-	if contextRecordSize(out) <= budget {
+	if size(out) <= budget {
 		return out, true
 	}
 	// Reserve useful text space rather than letting large source lists or other
@@ -187,7 +223,7 @@ func fitContextRecord(record store.Record, budget int) (contextRecord, bool) {
 	out.Body = ""
 	out.BodyTruncated = record.Body != ""
 	metadataBudget := min(budget, max(384, budget/2))
-	if contextRecordSize(out) > metadataBudget {
+	if size(out) > metadataBudget {
 		if kept := fitReferences(out.Sources, min(256, metadataBudget/4)); len(kept) < len(out.Sources) {
 			out.Sources = kept
 			markContextField(&out, "sources")
@@ -202,7 +238,7 @@ func fitContextRecord(record store.Record, budget int) (contextRecord, bool) {
 		}
 	}
 	for _, field := range []string{"sources", "links", "owner", "updated_by", "project_id", "priority", "updated_at", "reviewed_by", "reviewed_at"} {
-		if contextRecordSize(out) <= metadataBudget {
+		if size(out) <= metadataBudget {
 			break
 		}
 		switch field {
@@ -251,30 +287,30 @@ func fitContextRecord(record store.Record, budget int) (contextRecord, bool) {
 		}
 		markContextField(&out, field)
 	}
-	if contextRecordSize(out) > metadataBudget {
+	if size(out) > metadataBudget {
 		markContextField(&out, "title")
 		title := out.Title
 		out.Title = ""
 		out.Title = fitText(title, func(prefix string) bool {
 			out.Title = prefix
-			return contextRecordSize(out) <= metadataBudget
+			return size(out) <= metadataBudget
 		})
 	}
-	if contextRecordSize(out) > budget {
+	if size(out) > budget {
 		return contextRecord{}, false
 	}
 	// Removing large metadata may allow the complete body to fit. Check that
 	// before searching prefixes because clearing body_truncated saves bytes.
 	out.Body, out.BodyTruncated = record.Body, false
-	if contextRecordSize(out) <= budget {
+	if size(out) <= budget {
 		return out, true
 	}
 	out.Body, out.BodyTruncated = "", record.Body != ""
 	out.Body = fitText(record.Body, func(prefix string) bool {
 		out.Body = prefix
-		return contextRecordSize(out) <= budget
+		return size(out) <= budget
 	})
-	return out, contextRecordSize(out) <= budget
+	return out, size(out) <= budget
 }
 
 func markContextField(record *contextRecord, field string) {

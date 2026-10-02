@@ -30,7 +30,7 @@ func bindProject(ctx context.Context, cfg config, args []string, stdout, stderr 
 	fs := flags("project bind", stderr)
 	id := fs.String("project", "", "existing project record ID (required)")
 	dir := fs.String("dir", ".", "repository directory to bind")
-	budget := fs.Int("max-bytes", project.DefaultMaxBytes, "maximum context JSON bytes, including metadata")
+	budget := fs.Int("max-bytes", project.DefaultMaxBytes, "maximum context bytes, including metadata")
 	if err := parse(fs, args[1:]); err != nil {
 		return err
 	}
@@ -65,10 +65,18 @@ func bindProject(ctx context.Context, cfg config, args []string, stdout, stderr 
 func projectContextCommand(ctx context.Context, cfg config, args []string, stdout, stderr io.Writer) error {
 	fs := flags("context", stderr)
 	id := fs.String("project", "", "project ID; defaults to the nearest .herma-project.json")
-	budget := fs.Int("max-bytes", project.DefaultMaxBytes, "maximum context JSON bytes, including metadata")
+	budget := fs.Int("max-bytes", project.DefaultMaxBytes, "maximum context bytes, including metadata")
 	durable := fs.Bool("include-durable", false, "also include accepted knowledge")
+	format := fs.String("format", "text", "text (compact, for sessions) or json")
+	principles := fs.String("principles", "include", "include or omit accepted principles")
 	if err := parse(fs, args); err != nil {
 		return err
+	}
+	if *format != "text" && *format != "json" {
+		return errors.New("context --format must be text or json")
+	}
+	if *principles != "include" && *principles != "omit" {
+		return errors.New("context --principles must be include or omit")
 	}
 	if *id == "" {
 		cwd, err := os.Getwd()
@@ -87,7 +95,7 @@ func projectContextCommand(ctx context.Context, cfg config, args []string, stdou
 			*budget = binding.MaxBytes
 		}
 	}
-	data, err := cfg.contextData(ctx, *id, *budget, *durable)
+	data, err := cfg.contextData(ctx, contextRequest{ID: *id, Budget: *budget, Durable: *durable, Format: *format, Principles: *principles})
 	if err != nil {
 		return err
 	}
@@ -95,17 +103,47 @@ func projectContextCommand(ctx context.Context, cfg config, args []string, stdou
 	return err
 }
 
+type contextRequest struct {
+	ID         string
+	Budget     int
+	Durable    bool
+	Format     string // "text" or "json"
+	Principles string // "include", "omit" or "changed"
+}
+
 // Keep context compact on stdout as well as over HTTP. Indentation would add
 // unbudgeted text after the server has measured the response.
-func (cfg config) contextData(ctx context.Context, id string, budget int, durable bool) ([]byte, error) {
-	if err := contextBudget(budget); err != nil {
+func (cfg config) contextData(ctx context.Context, req contextRequest) ([]byte, error) {
+	if err := contextBudget(req.Budget); err != nil {
 		return nil, err
 	}
 	c, err := cfg.client()
 	if err != nil {
 		return nil, err
 	}
-	q := url.Values{"project_id": {id}, "max_bytes": {strconv.Itoa(budget)}, "include_durable": {strconv.FormatBool(durable)}}
+	q := url.Values{"project_id": {req.ID}, "max_bytes": {strconv.Itoa(req.Budget)}, "include_durable": {strconv.FormatBool(req.Durable)}}
+	// Older servers reject unknown parameters, so send only what differs from
+	// their behavior: JSON with principles included.
+	if req.Format != "json" {
+		q.Set("format", req.Format)
+	}
+	if req.Principles != "" && req.Principles != "include" {
+		q.Set("principles", req.Principles)
+	}
+	if req.Format == "text" {
+		data, err := c.Text(ctx, "/v1/context", q)
+		if err != nil {
+			return nil, err
+		}
+		header, _, _ := bytes.Cut(data, []byte{'\n'})
+		if !bytes.HasPrefix(header, []byte("herma context · project ")) || !bytes.Contains(header, []byte("("+req.ID+")")) || !bytes.HasSuffix(data, []byte{'\n'}) {
+			return nil, errors.New("server returned an incompatible context response; update the herma service")
+		}
+		if len(data) > req.Budget {
+			return nil, errors.New("server context exceeds the requested byte budget")
+		}
+		return data, nil
+	}
 	data, err := c.Do(ctx, http.MethodGet, "/v1/context", q, nil, "")
 	if err != nil {
 		return nil, err
@@ -116,7 +154,7 @@ func (cfg config) contextData(ctx context.Context, id string, budget int, durabl
 		} `json:"project"`
 		MaxBytes int `json:"max_bytes"`
 	}
-	if err := json.Unmarshal(data, &packet); err != nil || packet.Project.ID != id || packet.MaxBytes != budget {
+	if err := json.Unmarshal(data, &packet); err != nil || packet.Project.ID != req.ID || packet.MaxBytes != req.Budget {
 		return nil, errors.New("server returned an incompatible context response; update the herma service")
 	}
 	var compact bytes.Buffer
@@ -124,7 +162,7 @@ func (cfg config) contextData(ctx context.Context, id string, budget int, durabl
 		return nil, err
 	}
 	compact.WriteByte('\n')
-	if compact.Len() > budget {
+	if compact.Len() > req.Budget {
 		return nil, errors.New("server context exceeds the requested byte budget")
 	}
 	return compact.Bytes(), nil

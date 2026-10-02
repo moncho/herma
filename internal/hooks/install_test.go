@@ -7,9 +7,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+func sameCommand(command string) func(string) (string, error) {
+	return func(string) (string, error) { return command, nil }
+}
 
 func commandForTest(t *testing.T, identity string) string {
 	t.Helper()
@@ -66,7 +71,7 @@ func TestInstallBothPreservesSettingsAndUpdatesManagedHook(t *testing.T) {
 	paths := []string{writeConfig(t, dir, ".claude/settings.local.json", original), writeConfig(t, dir, ".codex/hooks.json", original)}
 	before := readJSON(t, paths[0])
 	command := commandForTest(t, "owner")
-	results, err := Install(dir, "both", command)
+	results, err := Install(dir, "both", sameCommand(command))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +114,7 @@ func TestInstallBothPreservesSettingsAndUpdatesManagedHook(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	results, err = Install(dir, "both", command)
+	results, err = Install(dir, "both", sameCommand(command))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +125,7 @@ func TestInstallBothPreservesSettingsAndUpdatesManagedHook(t *testing.T) {
 		}
 	}
 	updated := commandForTest(t, "worker")
-	results, err = Install(dir, "both", updated)
+	results, err = Install(dir, "both", sameCommand(updated))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +144,7 @@ func TestInstallBothPreservesSettingsAndUpdatesManagedHook(t *testing.T) {
 func TestReinstallRemovesLegacySessionStartSourceFilter(t *testing.T) {
 	dir := t.TempDir()
 	command := commandForTest(t, "owner")
-	results, err := Install(dir, "both", command)
+	results, err := Install(dir, "both", sameCommand(command))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +160,7 @@ func TestReinstallRemovesLegacySessionStartSourceFilter(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	results, err = Install(dir, "both", command)
+	results, err = Install(dir, "both", sameCommand(command))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +188,7 @@ func TestMalformedSecondDestinationDoesNotChangeFirst(t *testing.T) {
 				t.Fatal(err)
 			}
 			second := writeConfig(t, dir, ".codex/hooks.json", malformed)
-			if _, err := Install(dir, "both", commandForTest(t, "owner")); err == nil {
+			if _, err := Install(dir, "both", sameCommand(commandForTest(t, "owner"))); err == nil {
 				t.Fatal("accepted malformed second destination")
 			}
 			after, err := os.ReadFile(first)
@@ -200,7 +205,7 @@ func TestMalformedSecondDestinationDoesNotChangeFirst(t *testing.T) {
 
 func TestInstallCreatesOnlyRequestedClientAndRejectsSymlinks(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := Install(dir, "claude", commandForTest(t, "owner")); err != nil {
+	if _, err := Install(dir, "claude", sameCommand(commandForTest(t, "owner"))); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".codex")); !os.IsNotExist(err) {
@@ -233,7 +238,7 @@ func TestInstallCreatesOnlyRequestedClientAndRejectsSymlinks(t *testing.T) {
 				}
 				project = link
 			}
-			if _, err := Install(project, "codex", commandForTest(t, "owner")); err == nil {
+			if _, err := Install(project, "codex", sameCommand(commandForTest(t, "owner"))); err == nil {
 				t.Fatal("accepted symlink destination")
 			}
 			data, err := os.ReadFile(outsideConfig)
@@ -247,7 +252,7 @@ func TestInstallCreatesOnlyRequestedClientAndRejectsSymlinks(t *testing.T) {
 func TestManagedHookWithCustomExecutionFieldsIsNotOverwritten(t *testing.T) {
 	dir := t.TempDir()
 	command := commandForTest(t, "owner")
-	results, err := Install(dir, "codex", command)
+	results, err := Install(dir, "codex", sameCommand(command))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +266,7 @@ func TestManagedHookWithCustomExecutionFieldsIsNotOverwritten(t *testing.T) {
 	if err := os.WriteFile(results[0].Path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Install(dir, "codex", command); err == nil || !strings.Contains(err.Error(), "custom fields") {
+	if _, err := Install(dir, "codex", sameCommand(command)); err == nil || !strings.Contains(err.Error(), "custom fields") {
 		t.Fatalf("overwrote a customized managed hook: %v", err)
 	}
 	after, err := os.ReadFile(results[0].Path)
@@ -304,7 +309,7 @@ func TestInstallKeepsKeyOrderAndLiteralCharacters(t *testing.T) {
   "model": "custom"
 }
 `)
-	if _, err := Install(dir, "claude", commandForTest(t, "owner")); err != nil {
+	if _, err := Install(dir, "claude", sameCommand(commandForTest(t, "owner"))); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -326,8 +331,32 @@ func TestInstallKeepsKeyOrderAndLiteralCharacters(t *testing.T) {
 		}
 		previous = index
 	}
-	results, err := Install(dir, "claude", commandForTest(t, "owner"))
+	results, err := Install(dir, "claude", sameCommand(commandForTest(t, "owner")))
 	if err != nil || len(results) != 1 || results[0].Changed {
 		t.Fatalf("reinstall changed settings: %+v %v", results, err)
+	}
+}
+
+func TestInstallWritesEachClientsCommandAndUpgradesV1(t *testing.T) {
+	dir := t.TempDir()
+	v1 := commandForTest(t, "worker") + " # herma-managed:session-start:v1"
+	legacy := `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":` + strconv.Quote(v1) + `,"timeout":6,"async":false}]}]}}`
+	writeConfig(t, dir, ".claude/settings.local.json", legacy)
+	perClient := func(client string) (string, error) {
+		return QuoteCommand([]string{"/opt/herma/bin/herma", "hook", "session-start", "--client", client})
+	}
+	if _, err := Install(dir, "both", perClient); err != nil {
+		t.Fatal(err)
+	}
+	for client, relative := range map[string]string{"claude": ".claude/settings.local.json", "codex": ".codex/hooks.json"} {
+		groups := sessionGroups(t, readJSON(t, filepath.Join(dir, relative)))
+		if len(groups) != 1 {
+			t.Fatalf("%s: %d groups, want the v1 hook replaced in place", client, len(groups))
+		}
+		command := groups[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"].(string)
+		want, _ := perClient(client)
+		if command != want+marker || !strings.HasSuffix(command, "herma-managed:session-start:v2") {
+			t.Fatalf("%s command = %q", client, command)
+		}
 	}
 }

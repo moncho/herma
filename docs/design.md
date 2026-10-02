@@ -81,8 +81,10 @@ when the file changes; an invalid file keeps the previous identities.
   Snapshots exclude credentials. JSON export has no import counterpart.
 - List offset pagination can shift between separate calls as records change.
   Context and export are consistent within one request.
-- Context is capped by complete serialized JSON bytes, including metadata and
-  newline: 12 KiB by default, configurable between 2 and 64 KiB. A separate
+- Context is capped by the exact bytes of the response in its format (compact
+  text or JSON), including metadata and newline: 10 KiB by default,
+  configurable between 2 and 64 KiB, so Claude Code's 10,000-character hook
+  limit holds. A separate
   100-record candidate limit per category bounds query work. Summaries mark
   clipped bodies/fields and count omitted records. This is not a token estimate.
 - Exports are still assembled in memory, with a separate history query per

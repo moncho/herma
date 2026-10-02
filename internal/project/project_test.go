@@ -243,7 +243,7 @@ func TestBindWritesOnlyNonsecretFieldsAndRejectsInvalidInput(t *testing.T) {
 	if err := json.Unmarshal(data, &object); err != nil {
 		t.Fatal(err)
 	}
-	if len(object) != 2 || object["project_id"] == nil || string(object["max_bytes"]) != "12288" {
+	if len(object) != 2 || object["project_id"] == nil || string(object["max_bytes"]) != "10000" {
 		t.Fatalf("unexpected binding fields: %s", data)
 	}
 	entries, err := os.ReadDir(root)
