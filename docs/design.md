@@ -71,6 +71,9 @@ when the file changes; an invalid file keeps the previous identities.
   calls are required. Recall ranks accepted knowledge with FTS5 `bm25`, any-word
   matching and four-rune stems. A trigram index for substrings and Chinese or
   Japanese segmentation is deferred.
+- Field filters and sorts are evaluated over the record's JSON with
+  `json_extract`; indexes cover the kind and kind names, not individual fields,
+  so a query scans one kind's rows.
 - SessionStart hooks load context for bound projects in Claude Code and Codex.
   They read only, refresh at session boundaries, and fail open after a short
   deadline. They do not write a handoff automatically or watch other sessions.

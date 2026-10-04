@@ -277,11 +277,14 @@ func (h *Handler) record(w http.ResponseWriter, r *http.Request, id string, auth
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	if err := validateQuery(q, "kind", "project_id", "global", "status", "owner", "tag", "q", "include_archived", "limit", "offset"); err != nil {
+	// where may repeat; every other parameter must appear once.
+	where := q["where"]
+	q.Del("where")
+	if err := validateQuery(q, "kind", "project_id", "global", "status", "owner", "tag", "q", "sort", "include_archived", "limit", "offset"); err != nil {
 		badRequest(w, err)
 		return
 	}
-	options := store.ListOptions{Kind: q.Get("kind"), ProjectID: q.Get("project_id"), Status: q.Get("status"), Owner: q.Get("owner"), Tag: q.Get("tag"), Query: q.Get("q")}
+	options := store.ListOptions{Kind: q.Get("kind"), ProjectID: q.Get("project_id"), Status: q.Get("status"), Owner: q.Get("owner"), Tag: q.Get("tag"), Query: q.Get("q"), Where: where, Sort: q.Get("sort")}
 	var err error
 	if options.Global, err = queryBool(q, "global"); err != nil {
 		badRequest(w, err)

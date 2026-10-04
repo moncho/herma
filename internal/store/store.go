@@ -90,6 +90,14 @@ ALTER TABLE idempotency_compact RENAME TO idempotency;`,
 CREATE VIRTUAL TABLE record_search USING fts5(title, body, fields);
 INSERT INTO record_search(rowid, title, body, fields)
  SELECT search_rowid, json_extract(data, '$.title'), json_extract(data, '$.body'), '' FROM records;`,
+	// 5: kind-scoped queries read only that kind's rows, and kind names are
+	// found through a partial index. lookupKind and checkKindNameFree must keep
+	// json_extract(data, '$.title') with kind = 'kind' to use it. records_kind
+	// is deliberately narrow: adding the list order columns makes SQLite pick
+	// it over records_project_recent for the session context lists, which
+	// filter by project too, and scan every row of the kind.
+	`CREATE INDEX records_kind ON records(kind, archived);
+CREATE INDEX records_kind_name ON records(json_extract(data, '$.title')) WHERE kind = 'kind';`,
 }
 
 // Open opens a local SQLite database. The parent directory must already exist.
@@ -371,12 +379,12 @@ func (s *Store) List(ctx context.Context, options ListOptions) (ListResult, erro
 			add("r.search_rowid IN (SELECT rowid FROM record_search WHERE record_search MATCH ?)", query)
 		}
 	}
-	where := " FROM records r WHERE " + strings.Join(conditions, " AND ")
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return ListResult{}, err
 	}
 	defer tx.Rollback()
+	var kind *Kind
 	if options.Kind != "" {
 		k, found, err := lookupKind(ctx, tx, options.Kind)
 		if err != nil {
@@ -388,6 +396,7 @@ func (s *Store) List(ctx context.Context, options ListOptions) (ListResult, erro
 		if options.Status != "" && !k.allows(options.Status) {
 			return ListResult{}, invalid("invalid status filter")
 		}
+		kind = &k
 	} else if options.Status != "" {
 		kinds, err := kindsFrom(ctx, tx)
 		if err != nil {
@@ -397,15 +406,29 @@ func (s *Store) List(ctx context.Context, options ListOptions) (ListResult, erro
 			return ListResult{}, invalid("invalid status filter")
 		}
 	}
+	for _, expr := range options.Where {
+		c, err := parseWhere(*kind, expr)
+		if err != nil {
+			return ListResult{}, err
+		}
+		conditions = append(conditions, c.sql)
+		args = append(args, c.args...)
+	}
+	order := "r.priority DESC, r.updated_ns DESC, r.id ASC"
+	if options.RecentFirst {
+		order = "r.updated_ns DESC, r.id ASC"
+	}
+	if options.Sort != "" {
+		if order, err = parseSort(kind, options.Sort); err != nil {
+			return ListResult{}, err
+		}
+	}
+	where := " FROM records r WHERE " + strings.Join(conditions, " AND ")
 	result := ListResult{Items: []Record{}, Limit: options.Limit, Offset: options.Offset}
 	if err := tx.QueryRowContext(ctx, "SELECT count(*)"+where, args...).Scan(&result.Total); err != nil {
 		return ListResult{}, err
 	}
 	pageArgs := append(append([]any{}, args...), options.Limit, options.Offset)
-	order := "r.priority DESC, r.updated_ns DESC, r.id ASC"
-	if options.RecentFirst {
-		order = "r.updated_ns DESC, r.id ASC"
-	}
 	rows, err := tx.QueryContext(ctx, "SELECT r.data"+where+" ORDER BY "+order+" LIMIT ? OFFSET ?", pageArgs...)
 	if err != nil {
 		return ListResult{}, err
@@ -779,6 +802,20 @@ func validateList(o *ListOptions) error {
 	o.Query = strings.TrimSpace(o.Query)
 	if len(o.Query) > 500 || !utf8.ValidString(o.Query) {
 		return invalid("query must be valid UTF-8 and at most 500 bytes")
+	}
+	if len(o.Where) > maxWhereFilters {
+		return invalid(fmt.Sprintf("where supports at most %d filters", maxWhereFilters))
+	}
+	if len(o.Where) > 0 && o.Kind == "" {
+		return invalid("where requires a kind filter")
+	}
+	for _, expr := range o.Where {
+		if len(expr) > 500 || !utf8.ValidString(expr) {
+			return invalid("where expressions must be valid UTF-8 and at most 500 bytes")
+		}
+	}
+	if len(o.Sort) > 200 || !utf8.ValidString(o.Sort) {
+		return invalid("sort must be valid UTF-8 and at most 200 bytes")
 	}
 	if o.Limit == 0 {
 		o.Limit = 50
