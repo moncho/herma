@@ -53,9 +53,11 @@ Permissions are split by what each check needs. The API refuses every write from
 a read-only token before reading the body, and refuses reviewer tokens unless the
 request arrived on the Unix socket. The store receives the author's name and role
 and enforces the durable-record rules inside the write transaction, next to the
-version check: agents create knowledge and principles only as proposed and cannot
+version check (kind definitions, field validation and uniqueness are checked in
+that same transaction): agents create knowledge and principles only as proposed and cannot
 change them once judged, and accepting requires a source. A reviewer's judgement
-sets `reviewed_by` and `reviewed_at`.
+sets `reviewed_by` and `reviewed_at`. Kind records follow proposed, accepted,
+retired, and only a reviewer moves them.
 
 `herma serve` runs one handler on two listeners: loopback TCP for everyone and a
 private Unix socket that marks its requests. Credentials reload on `SIGHUP` or
@@ -63,7 +65,7 @@ when the file changes; an invalid file keeps the previous identities.
 
 ## Deliberate first-version limits
 
-- Six validated record kinds, with no arbitrary schema creation.
+- Record kinds are definitions: six built-in coordination and memory kinds and the built-in kind `kind` compiled into herma, plus kinds agents propose and the reviewer accepts. Fields are flat and typed; changes to an accepted kind are additive unless no live record breaks; there is no data migration for renamed or retyped fields.
 - One reviewer; roles separate the reviewer from agents and read-only sessions.
 - Plain-text full-text search and structured filters; no embeddings or model
   calls are required. Recall ranks accepted knowledge with FTS5 `bm25`, any-word

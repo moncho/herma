@@ -1,7 +1,10 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -51,15 +54,18 @@ func (textFormat) encode(c projectContext) ([]byte, error) {
 	var b strings.Builder
 	writeTextProject(&b, c.Project, c.GeneratedAt.UTC().Format(generatedAtLayout))
 	b.WriteString(contextScope + "\n" + recallHint + "\n")
+	if line := kindsLine(c.Kinds, c.KindsMore); line != "" {
+		b.WriteString(line + "\n")
+	}
 	if notes, ok := principlesLabels[c.PrinciplesLabel]; ok {
 		b.WriteString("\n## " + notes.heading + "\n")
 		// A clipped principle is not the complete set either.
-		partial := c.Omitted.Principles > 0
+		partial := c.PrinciplesOmitted > 0
 		for _, r := range c.Principles {
 			partial = partial || recordClipped(r)
 		}
 		switch {
-		case len(c.Principles) == 0 && c.Omitted.Principles == 0:
+		case len(c.Principles) == 0 && c.PrinciplesOmitted == 0:
 			b.WriteString(notes.none + "\n")
 		case partial:
 			b.WriteString(notes.partial + "\n")
@@ -72,12 +78,30 @@ func (textFormat) encode(c projectContext) ([]byte, error) {
 	} else {
 		writeTextSection(&b, "Principles", c.Principles)
 	}
-	writeTextSection(&b, "Tasks", c.Tasks)
-	writeTextSection(&b, "Feedback", c.Feedback)
-	writeTextSection(&b, "Notes", c.Notes)
-	writeTextSection(&b, "Knowledge", c.Knowledge)
+	for _, s := range c.Sections {
+		writeTextSection(&b, s.Heading, s.Records)
+	}
 	writeTextFooter(&b, c)
 	return []byte(b.String()), nil
+}
+
+const maxKindsInLine = 20
+
+// kindsLine names the custom kinds an agent can write in this project, so it
+// finds an existing kind instead of proposing a duplicate.
+// The packet already holds at most maxKindsInLine names; more counts the rest.
+func kindsLine(kinds []string, more int) string {
+	if len(kinds) == 0 && more == 0 {
+		return ""
+	}
+	line := "Custom kinds:"
+	if len(kinds) > 0 {
+		line += " " + strings.Join(kinds, ", ")
+	}
+	if more > 0 {
+		line += fmt.Sprintf(" +%d more", more)
+	}
+	return line + " (herma schema for fields)"
 }
 
 // writeTextProject prints the packet header line followed by the project's
@@ -120,7 +144,35 @@ func writeTextRecord(b *strings.Builder, r contextRecord) {
 	b.WriteString("- " + strings.Join(parts, " · ") + "\n")
 	writeIndented(b, r.Title)
 	writeIndented(b, r.Body)
+	writeTextFields(b, r.Fields)
 	writeTextReferences(b, r)
+}
+
+// writeTextFields prints one indented line per typed field, by name. A text
+// field may span lines; writeIndented keeps each of them indented.
+func writeTextFields(b *strings.Builder, fields map[string]any) {
+	for _, name := range slices.Sorted(maps.Keys(fields)) {
+		writeIndented(b, name+": "+fieldText(fields[name]))
+	}
+}
+
+func fieldText(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(v)
+	case []any:
+		items := make([]string, len(v))
+		for i, item := range v {
+			items[i] = fieldText(item)
+		}
+		return strings.Join(items, ", ")
+	}
+	data, _ := json.Marshal(value)
+	return string(data)
 }
 
 func writeTextReferences(b *strings.Builder, r contextRecord) {
@@ -154,21 +206,21 @@ func writeIndented(b *strings.Builder, text string) {
 
 func writeTextFooter(b *strings.Builder, c projectContext) {
 	var omitted []string
-	for _, item := range []struct {
-		name  string
-		count int
-	}{
-		{"principles", c.Omitted.Principles}, {"tasks", c.Omitted.Tasks}, {"feedback", c.Omitted.Feedback},
-		{"notes", c.Omitted.Notes}, {"knowledge", c.Omitted.Knowledge},
-	} {
-		if item.count > 0 {
-			omitted = append(omitted, fmt.Sprintf("%s %d", item.name, item.count))
+	if c.PrinciplesOmitted > 0 {
+		omitted = append(omitted, fmt.Sprintf("principles %d", c.PrinciplesOmitted))
+	}
+	for _, s := range c.Sections {
+		if s.Omitted > 0 {
+			omitted = append(omitted, fmt.Sprintf("%s %d", strings.ToLower(s.Heading), s.Omitted))
 		}
+	}
+	if c.CustomOmitted > 0 {
+		omitted = append(omitted, fmt.Sprintf("custom %d", c.CustomOmitted))
 	}
 	var clipped []string
 	records := append([]contextRecord{c.Project}, c.Principles...)
-	for _, group := range [][]contextRecord{c.Tasks, c.Feedback, c.Notes, c.Knowledge} {
-		records = append(records, group...)
+	for _, s := range c.Sections {
+		records = append(records, s.Records...)
 	}
 	for _, r := range records {
 		if r.BodyTruncated {

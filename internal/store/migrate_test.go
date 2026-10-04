@@ -323,12 +323,34 @@ func TestOpenUpgradesVersionTwoReceipts(t *testing.T) {
 	}
 	defer s.Close()
 	got, replay, err := s.Create(ctx, reviewer("agent-a"), "old-request", input)
-	if err != nil || !replay || !reflect.DeepEqual(got, r) {
+	want := r
+	want.Fields = map[string]any{} // snapshots from before typed fields decode with none
+	if err != nil || !replay || !reflect.DeepEqual(got, want) {
 		t.Fatalf("replay of upgraded receipt: %+v %t %v", got, replay, err)
 	}
 	other := input
 	other.Title = "Different input"
 	if _, _, err := s.Create(ctx, reviewer("agent-a"), "old-request", other); !errors.Is(err, ErrIdempotency) {
 		t.Fatalf("misuse of upgraded receipt: %v", err)
+	}
+}
+
+func TestSearchFindsFieldValuesAfterUpgrade(t *testing.T) {
+	path := legacyDatabase(t, legacyRecord("rec_"+strings.Repeat("a", 32), "Old title", "old body"))
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if userVersion(t, s) != 4 {
+		t.Fatalf("user_version = %d", userVersion(t, s))
+	}
+	if searchTotal(t, s, "old") != 1 {
+		t.Fatal("legacy record lost from search")
+	}
+	acceptKind(t, s, "bookmark", bookmarkDefinition(), "")
+	createRecord(t, s, CreateInput{Kind: "bookmark", Title: "Untitled", Fields: map[string]any{"url": "https://zebra.example/x", "authors": "Hipp"}})
+	if searchTotal(t, s, "zebra") != 1 || searchTotal(t, s, "hipp") != 1 {
+		t.Fatal("field values are not searchable")
 	}
 }

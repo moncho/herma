@@ -12,6 +12,26 @@ import (
 	"github.com/moncho/herma/internal/store"
 )
 
+// reviewQueue decodes the paged lists in the review output, leaving out
+// pending_kind_changes, which is a plain array.
+func reviewQueue(t *testing.T, data []byte) map[string]store.ListResult {
+	t.Helper()
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	delete(raw, "pending_kind_changes")
+	queue := map[string]store.ListResult{}
+	for key, value := range raw {
+		var page store.ListResult
+		if err := json.Unmarshal(value, &page); err != nil {
+			t.Fatalf("%s: %v", key, err)
+		}
+		queue[key] = page
+	}
+	return queue
+}
+
 func TestReviewListsProposedDurableRecordsWithPagination(t *testing.T) {
 	startServe(t)
 	for _, args := range [][]string{
@@ -28,10 +48,7 @@ func TestReviewListsProposedDurableRecordsWithPagination(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var queue map[string]store.ListResult
-	if err := json.Unmarshal(data, &queue); err != nil {
-		t.Fatal(err)
-	}
+	queue := reviewQueue(t, data)
 	if queue["knowledge"].Total != 2 || queue["principles"].Total != 1 {
 		t.Fatalf("queue totals: %s", data)
 	}
@@ -41,8 +58,12 @@ func TestReviewListsProposedDurableRecordsWithPagination(t *testing.T) {
 		}
 	}
 	data, err = runCLI(t, "review", "--limit", "1", "--offset", "1")
-	if err != nil || json.Unmarshal(data, &queue) != nil || len(queue["knowledge"].Items) != 1 || queue["knowledge"].Total != 2 {
+	if err != nil {
 		t.Fatalf("paged review: %s %v", data, err)
+	}
+	queue = reviewQueue(t, data)
+	if len(queue["knowledge"].Items) != 1 || queue["knowledge"].Total != 2 {
+		t.Fatalf("paged review: %s", data)
 	}
 	if _, err := runCLI(t, "review", "--limit", "0"); err == nil {
 		t.Fatal("accepted limit 0")

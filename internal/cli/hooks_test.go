@@ -82,16 +82,14 @@ func TestBoundContextAndSessionStartLoadFreshCoordination(t *testing.T) {
 			t.Fatalf("unbounded/invalid context: %d bytes", len(data))
 		}
 		var packet struct {
-			Project   store.Record   `json:"project"`
-			Tasks     []store.Record `json:"tasks"`
-			Notes     []store.Record `json:"notes"`
-			Knowledge []store.Record `json:"knowledge"`
-			Scope     string         `json:"scope"`
+			Project  store.Record     `json:"project"`
+			Sections []contextSection `json:"sections"`
+			Scope    string           `json:"scope"`
 		}
 		if err := json.Unmarshal(data, &packet); err != nil {
 			t.Fatal(err)
 		}
-		if packet.Project.ID != p.ID || len(packet.Tasks) != 1 || len(packet.Knowledge) != 0 || len(packet.Notes) != 1 || packet.Notes[0].ID != note.ID {
+		if packet.Project.ID != p.ID || len(sectionRecords(packet.Sections, "task")) != 1 || len(sectionRecords(packet.Sections, "knowledge")) != 0 || len(sectionRecords(packet.Sections, "note")) != 1 || sectionRecords(packet.Sections, "note")[0].ID != note.ID {
 			t.Fatalf("unexpected coordination packet: %s", data)
 		}
 		if !strings.Contains(packet.Scope, "untrusted") {

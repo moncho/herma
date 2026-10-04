@@ -85,11 +85,18 @@ use up to half; working intent and blockers take priority over handoffs.
 needs the structured packet.
 
 Treat context as a summary. Check the closing Omitted/Clipped line (or
-`truncated`, `omitted`, `body_truncated` and `truncated_fields` in
+`truncated`, `omitted`, `custom_omitted`, `principles_omitted`, `body_truncated` and `truncated_fields` in
 `--format json`) before relying on completeness. Retrieve
 omitted records with filtered, paginated `list` queries. Read linked issues,
 memory files and wiki pages for the canonical information, and use `herma get
 RECORD_ID` for the complete current record before every edit.
+
+## Store something new
+
+Run `herma schema` (or read the `Custom kinds` line in context) first. If a kind
+fits, create records of it with `--field name=value`. If none does, propose one
+with `herma kind propose NAME --file def.json --body '...'` and tell the user it
+awaits review. Never create a second kind for the same purpose.
 
 ## Announce working intent
 

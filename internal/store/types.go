@@ -16,6 +16,13 @@ type ValidationError struct{ Message string }
 
 func (e *ValidationError) Error() string { return e.Message }
 
+// DuplicateError reports a unique field value another live record already holds.
+type DuplicateError struct{ Field, ExistingID string }
+
+func (e *DuplicateError) Error() string {
+	return "fields." + e.Field + ": already used by " + e.ExistingID
+}
+
 // Role limits what an authenticated author may change.
 type Role string
 
@@ -37,22 +44,23 @@ type Author struct {
 // Record is a versioned piece of knowledge. Authenticated identities, rather
 // than client-provided attribution, populate CreatedBy and UpdatedBy.
 type Record struct {
-	ID        string    `json:"id"`
-	Kind      string    `json:"kind"`
-	Title     string    `json:"title"`
-	Body      string    `json:"body"`
-	ProjectID string    `json:"project_id,omitempty"`
-	Status    string    `json:"status"`
-	Priority  int       `json:"priority"`
-	Owner     string    `json:"owner,omitempty"`
-	Tags      []string  `json:"tags"`
-	Links     []string  `json:"links"`
-	Sources   []string  `json:"sources"`
-	Archived  bool      `json:"archived"`
-	CreatedBy string    `json:"created_by"`
-	UpdatedBy string    `json:"updated_by"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string         `json:"id"`
+	Kind      string         `json:"kind"`
+	Title     string         `json:"title"`
+	Body      string         `json:"body"`
+	ProjectID string         `json:"project_id,omitempty"`
+	Status    string         `json:"status"`
+	Priority  int            `json:"priority"`
+	Owner     string         `json:"owner,omitempty"`
+	Tags      []string       `json:"tags"`
+	Links     []string       `json:"links"`
+	Sources   []string       `json:"sources"`
+	Fields    map[string]any `json:"fields"`
+	Archived  bool           `json:"archived"`
+	CreatedBy string         `json:"created_by"`
+	UpdatedBy string         `json:"updated_by"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 	// Set by the store when a reviewer judges a durable record; never by clients.
 	ReviewedBy string     `json:"reviewed_by,omitempty"`
 	ReviewedAt *time.Time `json:"reviewed_at,omitempty"`
@@ -60,16 +68,17 @@ type Record struct {
 }
 
 type CreateInput struct {
-	Kind      string   `json:"kind"`
-	Title     string   `json:"title"`
-	Body      string   `json:"body"`
-	ProjectID string   `json:"project_id,omitempty"`
-	Status    string   `json:"status,omitempty"`
-	Priority  int      `json:"priority"`
-	Owner     string   `json:"owner,omitempty"`
-	Tags      []string `json:"tags,omitempty"`
-	Links     []string `json:"links,omitempty"`
-	Sources   []string `json:"sources,omitempty"`
+	Kind      string         `json:"kind"`
+	Title     string         `json:"title"`
+	Body      string         `json:"body"`
+	ProjectID string         `json:"project_id,omitempty"`
+	Status    string         `json:"status,omitempty"`
+	Priority  int            `json:"priority"`
+	Owner     string         `json:"owner,omitempty"`
+	Tags      []string       `json:"tags,omitempty"`
+	Links     []string       `json:"links,omitempty"`
+	Sources   []string       `json:"sources,omitempty"`
+	Fields    map[string]any `json:"fields,omitempty"`
 }
 
 // An explicit version prevents a stale session from overwriting newer work.
@@ -85,6 +94,9 @@ type UpdateInput struct {
 	Links     *[]string `json:"links,omitempty"`
 	Sources   *[]string `json:"sources,omitempty"`
 	Archived  *bool     `json:"archived,omitempty"`
+	// Fields is a patch: a value sets a field and null removes it.
+	Fields        map[string]any `json:"fields,omitempty"`
+	AcceptPending bool           `json:"accept_pending,omitempty"`
 }
 
 type ListOptions struct {

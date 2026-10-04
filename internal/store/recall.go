@@ -2,8 +2,8 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -69,8 +69,16 @@ func recallQuery(query string) (whole, stems string, err error) {
 	return strings.Join(wholeTerms, " OR "), strings.Join(stemTerms, " OR "), nil
 }
 
-// Recall returns reviewed knowledge and principles ranked by relevance.
-func (s *Store) Recall(ctx context.Context, o RecallOptions) ([]Record, error) {
+// Recalled is a recall result. Reviewed is true when a reviewer accepted it;
+// records of kinds without review are returned unreviewed.
+type Recalled struct {
+	Record
+	Reviewed bool
+}
+
+// Recall ranks accepted knowledge and principles, and records of other kinds
+// with recall enabled, by relevance.
+func (s *Store) Recall(ctx context.Context, o RecallOptions) ([]Recalled, error) {
 	o.Query = strings.TrimSpace(o.Query)
 	if len(o.Query) > 500 || !utf8.ValidString(o.Query) {
 		return nil, invalid("recall query must be valid UTF-8 and at most 500 bytes")
@@ -88,17 +96,32 @@ func (s *Store) Recall(ctx context.Context, o RecallOptions) ([]Record, error) {
 	if err != nil {
 		return nil, err
 	}
+	kinds, err := kindsFrom(ctx, s.db)
+	if err != nil {
+		return nil, err
+	}
+	var reviewed, open []string
+	for _, k := range kinds {
+		if !k.Definition.Policy.Recall || k.Status == "proposed" {
+			continue
+		}
+		if k.review() {
+			reviewed = append(reviewed, k.Name)
+		} else {
+			open = append(open, k.Name)
+		}
+	}
 	statuses := "'accepted'"
 	if o.IncludeProposed {
 		statuses = "'accepted', 'proposed'"
 	}
-	records := []Record{}
+	records := []Recalled{}
 	seen := map[string]bool{}
 	for _, match := range []string{whole, stems} {
 		if match == "" || len(records) >= o.Limit {
 			continue
 		}
-		found, err := s.recallPass(ctx, o, statuses, match, seen, o.Limit-len(records))
+		found, err := s.recallPass(ctx, o, reviewed, open, statuses, match, seen, o.Limit-len(records))
 		if err != nil {
 			return nil, err
 		}
@@ -109,10 +132,21 @@ func (s *Store) Recall(ctx context.Context, o RecallOptions) ([]Record, error) {
 
 // recallPass runs one ranked query, skipping ids already returned by an
 // earlier pass and recording the ids it returns.
-func (s *Store) recallPass(ctx context.Context, o RecallOptions, statuses, match string, seen map[string]bool, limit int) ([]Record, error) {
+func (s *Store) recallPass(ctx context.Context, o RecallOptions, reviewed, open []string, statuses, match string, seen map[string]bool, limit int) ([]Recalled, error) {
+	placeholders := func(n int) string { return strings.TrimSuffix(strings.Repeat("?,", n), ",") }
+	condition := "r.kind IN (" + placeholders(len(reviewed)) + ") AND r.status IN (" + statuses + ")"
+	if len(open) > 0 {
+		condition = "((" + condition + ") OR r.kind IN (" + placeholders(len(open)) + "))"
+	}
 	query := `SELECT r.data FROM record_search JOIN records r ON r.search_rowid = record_search.rowid
-WHERE record_search MATCH ? AND r.kind IN ('knowledge', 'principle') AND r.archived = 0 AND r.status IN (` + statuses + `)`
+WHERE record_search MATCH ? AND ` + condition + ` AND r.archived = 0`
 	args := []any{match}
+	for _, name := range reviewed {
+		args = append(args, name)
+	}
+	for _, name := range open {
+		args = append(args, name)
+	}
 	if o.ProjectID != "" {
 		query += " AND (r.project_id = ? OR r.project_id IS NULL)"
 		args = append(args, o.ProjectID)
@@ -123,25 +157,25 @@ WHERE record_search MATCH ? AND r.kind IN ('knowledge', 'principle') AND r.archi
 			args = append(args, id)
 		}
 	}
-	query += ` ORDER BY bm25(record_search, 5.0, 1.0), CASE WHEN r.project_id = ? THEN 0 ELSE 1 END, r.priority DESC, r.updated_ns DESC, r.id LIMIT ?`
+	query += ` ORDER BY bm25(record_search, 5.0, 1.0, 0.5), CASE WHEN r.project_id = ? THEN 0 ELSE 1 END, r.priority DESC, r.updated_ns DESC, r.id LIMIT ?`
 	args = append(args, o.ProjectID, limit)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	records := []Record{}
+	records := []Recalled{}
 	for rows.Next() {
 		var data string
 		if err := rows.Scan(&data); err != nil {
 			return nil, err
 		}
-		var r Record
-		if err := json.Unmarshal([]byte(data), &r); err != nil {
-			return nil, fmt.Errorf("decode record: %w", err)
+		r, err := decodeRecord(data)
+		if err != nil {
+			return nil, err
 		}
 		seen[r.ID] = true
-		records = append(records, r)
+		records = append(records, Recalled{Record: r, Reviewed: slices.Contains(reviewed, r.Kind) && r.Status == "accepted"})
 	}
 	return records, rows.Err()
 }

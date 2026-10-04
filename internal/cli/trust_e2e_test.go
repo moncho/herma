@@ -51,9 +51,9 @@ func TestReviewWorkflowAcrossRoles(t *testing.T) {
 
 	data, err = runCLI(t, "context", "--project", project.ID, "--include-durable", "--format", "json")
 	var packet struct {
-		Knowledge []store.Record `json:"knowledge"`
+		Sections []contextSection `json:"sections"`
 	}
-	if err != nil || json.Unmarshal(data, &packet) != nil || len(packet.Knowledge) != 1 || packet.Knowledge[0].ID != proposal.ID {
+	if err != nil || json.Unmarshal(data, &packet) != nil || len(sectionRecords(packet.Sections, "knowledge")) != 1 || sectionRecords(packet.Sections, "knowledge")[0].ID != proposal.ID {
 		t.Fatalf("durable context: %s %v", data, err)
 	}
 }

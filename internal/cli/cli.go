@@ -49,6 +49,10 @@ Commands:
   backup status                Show automatic snapshot status
   restore SNAPSHOT|DIR [--db PATH] [--replace]
                                Restore a snapshot with the service stopped
+  kind propose NAME --file PATH [--project ID] [--body TEXT]
+                               Propose a record kind from a JSON definition
+  kind change ID --file PATH   Propose a change to an accepted kind (fields.pending)
+  kind list                    List kinds with status and pending changes
   create --kind KIND --title TITLE [--body TEXT | --body-file PATH] [fields]
   list [--project ID] [--kind KIND] [--q TEXT] [filters]
   get ID
@@ -57,7 +61,7 @@ Commands:
   project bind --project ID [--dir PATH] [--max-bytes N]
   hook install --client claude|codex|both [--dir PATH]
   hook session-start [--client claude|codex]  Load bounded project context for a SessionStart hook
-  review [--limit N] [--offset N]  List proposed knowledge and principles awaiting review
+  review [--limit N] [--offset N]  List proposed knowledge, principles and kinds, and pending kind changes
   context [--project ID] [--max-bytes N] [--include-durable] [--format text|json] [--principles include|omit]
                                Compact session context (text by default)
   recall "words" [--project ID] [--include-proposed] [--limit N] [--max-bytes N]
@@ -66,8 +70,10 @@ Commands:
   export
 
 Fields: --title, --body, --body-file, --project, --status, --priority,
-        --owner, --tags, --links, --sources. Lists are comma-separated.
-The human reviewer accepts or rejects with update ID --version N --status accepted|rejected (--identity owner).
+        --owner, --tags, --links, --sources, --field NAME=VALUE (repeatable),
+        --fields-file PATH. Lists are comma-separated.
+The human reviewer accepts or rejects with update ID --version N --status accepted|rejected (--identity owner),
+and accepts a kind's pending change with update ID --version N --accept-pending.
 Writes accept --request-id KEY for safe retries; write errors include the key used.
 Updates send only supplied fields. Record bodies may contain up to 64 KiB of UTF-8.
 Use COMMAND --help for command options; for update use update ID --help.
@@ -163,6 +169,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return list(ctx, cfg, rest, stdout, stderr)
 	case "project":
 		return bindProject(ctx, cfg, rest, stdout, stderr)
+	case "kind":
+		return kindCommand(ctx, cfg, rest, stdout, stderr)
 	case "review":
 		return review(ctx, cfg, rest, stdout, stderr)
 	case "hook":
@@ -281,6 +289,30 @@ func writeError(err error, requestID string) error {
 type fields struct {
 	title, body, bodyFile, project, status, owner, tags, links, sources, requestID string
 	priority                                                                       int
+	fieldValues                                                                    fieldFlags
+	fieldsFile                                                                     string
+}
+
+// fieldFlags collects repeated --field name=value flags. An empty value
+// removes the field on update.
+type fieldFlags map[string]any
+
+func (f *fieldFlags) String() string { return "" }
+
+func (f *fieldFlags) Set(value string) error {
+	name, v, ok := strings.Cut(value, "=")
+	if !ok || name == "" {
+		return errors.New("--field must be name=value")
+	}
+	if *f == nil {
+		*f = fieldFlags{}
+	}
+	if v == "" {
+		(*f)[name] = nil
+	} else {
+		(*f)[name] = v
+	}
+	return nil
 }
 
 func (v *fields) register(fs *flag.FlagSet) {
@@ -295,6 +327,30 @@ func (v *fields) register(fs *flag.FlagSet) {
 	fs.StringVar(&v.links, "links", "", "comma-separated related record IDs")
 	fs.StringVar(&v.sources, "sources", "", "comma-separated source references or URLs")
 	fs.StringVar(&v.requestID, "request-id", "", "idempotency key; defaults to a new random key")
+	fs.Var(&v.fieldValues, "field", "typed field as name=value (repeatable); lists are comma-separated; name= removes it on update")
+	fs.StringVar(&v.fieldsFile, "fields-file", "", "JSON object of typed fields (create) or a field patch (update)")
+}
+
+// readFields returns the typed fields from --field or --fields-file.
+func (v *fields) readFields(set map[string]bool) (map[string]any, error) {
+	if set["field"] && set["fields-file"] {
+		return nil, errors.New("use either --field or --fields-file, not both")
+	}
+	if set["fields-file"] {
+		data, err := os.ReadFile(v.fieldsFile)
+		if err != nil {
+			return nil, fmt.Errorf("read fields file: %w", err)
+		}
+		var fields map[string]any
+		if err := json.Unmarshal(data, &fields); err != nil || fields == nil {
+			return nil, errors.New("fields file must hold one JSON object")
+		}
+		return fields, nil
+	}
+	if len(v.fieldValues) == 0 {
+		return nil, nil
+	}
+	return map[string]any(v.fieldValues), nil
 }
 
 func supplied(fs *flag.FlagSet) map[string]bool {
@@ -349,7 +405,16 @@ func create(ctx context.Context, cfg config, args []string, stdout, stderr io.Wr
 	if err := v.readBody(supplied(fs)); err != nil {
 		return err
 	}
-	input := store.CreateInput{Kind: *kind, Title: v.title, Body: v.body, ProjectID: v.project, Status: v.status, Priority: v.priority, Owner: v.owner, Tags: csv(v.tags), Links: csv(v.links), Sources: csv(v.sources)}
+	fieldValues, err := v.readFields(supplied(fs))
+	if err != nil {
+		return err
+	}
+	for name, value := range fieldValues {
+		if value == nil {
+			return fmt.Errorf("--field %s= has no value; omit the field on create", name)
+		}
+	}
+	input := store.CreateInput{Kind: *kind, Title: v.title, Body: v.body, ProjectID: v.project, Status: v.status, Priority: v.priority, Owner: v.owner, Tags: csv(v.tags), Links: csv(v.links), Sources: csv(v.sources), Fields: fieldValues}
 	return cfg.request(ctx, stdout, http.MethodPost, "/v1/records", nil, input, v.requestID)
 }
 
@@ -363,6 +428,7 @@ func update(ctx context.Context, cfg config, args []string, stdout, stderr io.Wr
 	v.register(fs)
 	version := fs.Int64("version", 0, "current record version (required)")
 	archived := fs.String("archived", "", "true to archive, false to restore")
+	acceptPending := fs.Bool("accept-pending", false, "reviewer: accept a kind's pending definition change")
 	if err := parse(fs, args[1:]); err != nil {
 		return err
 	}
@@ -410,6 +476,16 @@ func update(ctx context.Context, cfg config, args []string, stdout, stderr io.Wr
 		}
 		value := *archived == "true"
 		input.Archived = &value
+	}
+	if set["field"] || set["fields-file"] {
+		patch, err := v.readFields(set)
+		if err != nil {
+			return err
+		}
+		input.Fields = patch
+	}
+	if *acceptPending {
+		input.AcceptPending = true
 	}
 	mutable := false
 	for name := range set {

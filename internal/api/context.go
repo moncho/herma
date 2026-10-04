@@ -23,26 +23,23 @@ const (
 // Snapshot records remain complete until the read lock is released. Projection,
 // text clipping, JSON encoding, and client I/O all happen afterwards.
 type contextSnapshot struct {
-	Project     store.Record
-	Principles  []store.Record
-	Knowledge   []store.Record
-	Tasks       []store.Record
-	Notes       []store.Record
-	Feedback    []store.Record
-	GeneratedAt time.Time
-	Totals      contextCounts
+	Project         store.Record
+	Principles      []store.Record
+	PrinciplesTotal int
+	Sections        []snapshotSection
+	Kinds           []string
+	GeneratedAt     time.Time
 }
 
-type contextCounts struct {
-	Tasks      int `json:"tasks"`
-	Feedback   int `json:"feedback"`
-	Notes      int `json:"notes"`
-	Knowledge  int `json:"knowledge"`
-	Principles int `json:"principles"`
-}
-
-func (c contextCounts) any() bool {
-	return c.Tasks > 0 || c.Feedback > 0 || c.Notes > 0 || c.Knowledge > 0 || c.Principles > 0
+// snapshotSection holds one kind's eligible records. Sections sharing a tier
+// compete by priority (tasks and feedback); later tiers get the space left.
+type snapshotSection struct {
+	Kind, Heading string
+	Tier          int
+	RecentFirst   bool
+	Custom        bool // listed in the packet only once a record is placed
+	Records       []store.Record
+	Total         int
 }
 
 func (h *Handler) projectContext(w http.ResponseWriter, r *http.Request) {
@@ -90,7 +87,7 @@ func (h *Handler) projectContext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if principles == "omit" {
-		snapshot.Principles, snapshot.Totals.Principles = nil, 0
+		snapshot.Principles, snapshot.PrinciplesTotal = nil, 0
 	}
 	data, err := packContext(snapshot, contextOptions{budget: budget, includeDurable: includeDurable, format: format, principlesLabel: principlesLabel(principles)})
 	if err != nil {
@@ -113,35 +110,46 @@ func (h *Handler) projectSnapshot(ctx context.Context, projectID string, include
 	if project.Kind != "project" || project.Archived {
 		return contextSnapshot{}, &store.ValidationError{Message: "context requires an unarchived project"}
 	}
-	result := contextSnapshot{Project: project, GeneratedAt: time.Now().UTC()}
-	for _, category := range []struct {
-		kind     string
-		statuses []string
-		global   bool
-		target   *[]store.Record
-		total    *int
-	}{
-		{"task", []string{"open", "in_progress", "blocked"}, false, &result.Tasks, &result.Totals.Tasks},
-		{"feedback", []string{"open", "triaged"}, false, &result.Feedback, &result.Totals.Feedback},
-		{"note", []string{"published"}, false, &result.Notes, &result.Totals.Notes},
-		{"knowledge", []string{"accepted"}, true, &result.Knowledge, &result.Totals.Knowledge},
-		{"principle", []string{"accepted"}, true, &result.Principles, &result.Totals.Principles},
-	} {
-		// Principles always load; knowledge only when durable content is requested.
-		if category.kind == "knowledge" && !includeDurable {
+	kinds, err := h.store.Kinds(ctx)
+	if err != nil {
+		return contextSnapshot{}, err
+	}
+	result := contextSnapshot{Project: project, GeneratedAt: time.Now().UTC(), Kinds: []string{}}
+	custom := 0
+	for _, k := range kinds {
+		if !k.Builtin && (k.Status != "accepted" || (k.ProjectID != "" && k.ProjectID != project.ID)) {
 			continue
 		}
-		items, total, err := h.contextRecords(ctx, project.ID, category.kind, category.statuses, category.global)
+		if !k.Builtin {
+			result.Kinds = append(result.Kinds, k.Name)
+		}
+		if k.Name == "principle" {
+			result.Principles, result.PrinciplesTotal, err = h.contextRecords(ctx, project.ID, k.Name, []string{"accepted"}, true, false, contextLimit)
+			if err != nil {
+				return contextSnapshot{}, err
+			}
+			continue
+		}
+		policy := k.Definition.Policy.Context
+		if policy == nil || (k.OptIn && !includeDurable) {
+			continue
+		}
+		tier := k.ContextTier
+		if !k.Builtin {
+			tier = 10 + custom // custom kinds follow the built-ins, one tier each, by name
+			custom++
+		}
+		recent := policy.Order == "recent"
+		items, total, err := h.contextRecords(ctx, project.ID, k.Name, policy.Statuses, k.ContextGlobal, recent, min(policy.MaxRecords, contextLimit))
 		if err != nil {
 			return contextSnapshot{}, err
 		}
-		*category.target = items
-		*category.total = total
+		result.Sections = append(result.Sections, snapshotSection{Kind: k.Name, Heading: k.Heading, Tier: tier, RecentFirst: recent, Custom: !k.Builtin, Records: items, Total: total})
 	}
 	return result, nil
 }
 
-func (h *Handler) contextRecords(ctx context.Context, project, kind string, statuses []string, includeGlobal bool) ([]store.Record, int, error) {
+func (h *Handler) contextRecords(ctx context.Context, project, kind string, statuses []string, includeGlobal, recentFirst bool, limit int) ([]store.Record, int, error) {
 	items := []store.Record{}
 	total := 0
 	scopes := []bool{false}
@@ -150,7 +158,7 @@ func (h *Handler) contextRecords(ctx context.Context, project, kind string, stat
 	}
 	for _, global := range scopes {
 		for _, status := range statuses {
-			o := store.ListOptions{Kind: kind, Status: status, Limit: contextLimit, Global: global, RecentFirst: kind == "note"}
+			o := store.ListOptions{Kind: kind, Status: status, Limit: limit, Global: global, RecentFirst: recentFirst}
 			if !global {
 				o.ProjectID = project
 			}
@@ -163,10 +171,10 @@ func (h *Handler) contextRecords(ctx context.Context, project, kind string, stat
 		}
 	}
 	sort.Slice(items, func(i, j int) bool {
-		return contextRecordLess(items[i], items[j], kind == "note")
+		return contextRecordLess(items[i], items[j], recentFirst)
 	})
-	if len(items) > contextLimit {
-		items = items[:contextLimit]
+	if len(items) > limit {
+		items = items[:limit]
 	}
 	return items, total, nil
 }

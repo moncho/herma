@@ -127,18 +127,34 @@ func recordPath(record store.Record) string { return "/v1/records/" + url.PathEs
 func pointer[T any](value T) *T { return &value }
 
 type contextResponse struct {
-	Project     store.Record   `json:"project"`
-	Principles  []store.Record `json:"principles"`
-	Knowledge   []store.Record `json:"knowledge"`
-	Tasks       []store.Record `json:"tasks"`
-	Notes       []store.Record `json:"notes"`
-	Feedback    []store.Record `json:"feedback"`
-	GeneratedAt time.Time      `json:"generated_at"`
-	Truncated   bool           `json:"truncated"`
-	MaxBytes    int            `json:"max_bytes"`
-	Omitted     struct {
-		Knowledge int `json:"knowledge"`
-	} `json:"omitted"`
+	Project    store.Record   `json:"project"`
+	Principles []store.Record `json:"principles"`
+	Sections   []struct {
+		Kind    string         `json:"kind"`
+		Records []store.Record `json:"records"`
+		Omitted int            `json:"omitted"`
+	} `json:"sections"`
+	GeneratedAt time.Time `json:"generated_at"`
+	Truncated   bool      `json:"truncated"`
+	MaxBytes    int       `json:"max_bytes"`
+}
+
+func (c contextResponse) section(kind string) []store.Record {
+	for _, s := range c.Sections {
+		if s.Kind == kind {
+			return s.Records
+		}
+	}
+	return nil
+}
+
+func (c contextResponse) omittedFor(kind string) int {
+	for _, s := range c.Sections {
+		if s.Kind == kind {
+			return s.Omitted
+		}
+	}
+	return 0
 }
 
 type historyResponse struct {
@@ -184,8 +200,8 @@ func TestSharedKnowledgeSurvivesRestartAndConcurrentUpdates(t *testing.T) {
 	if context.Project.ID != project.ID || context.GeneratedAt.IsZero() || context.Truncated {
 		t.Errorf("unexpected project context metadata: %+v", context)
 	}
-	assertRecordIDs(t, context.Knowledge, decision)
-	assertRecordIDs(t, context.Tasks, task)
+	assertRecordIDs(t, context.section("knowledge"), decision)
+	assertRecordIDs(t, context.section("task"), task)
 
 	updated := integrationRequest[store.Record](t, second, http.MethodPatch, recordPath(task), tokenB, "", store.UpdateInput{
 		Version: task.Version, Body: pointer("Session B picked up the unfinished work."), Owner: pointer("session-b"),
@@ -301,10 +317,10 @@ func TestProjectContextIsolationAndPortableExport(t *testing.T) {
 
 	context := integrationRequest[contextResponse](t, s, http.MethodGet, "/v1/context?project_id="+url.QueryEscape(project.ID)+"&include_durable=true", tokenB, "", nil, http.StatusOK)
 	assertRecordIDs(t, context.Principles, globalPrinciple, localPrinciple)
-	assertRecordIDs(t, context.Knowledge, globalKnowledge, localKnowledge)
-	assertRecordIDs(t, context.Tasks, task)
-	assertRecordIDs(t, context.Notes, note)
-	assertRecordIDs(t, context.Feedback, feedback)
+	assertRecordIDs(t, context.section("knowledge"), globalKnowledge, localKnowledge)
+	assertRecordIDs(t, context.section("task"), task)
+	assertRecordIDs(t, context.section("note"), note)
+	assertRecordIDs(t, context.section("feedback"), feedback)
 	if context.Project.ID != project.ID || context.Truncated || context.GeneratedAt.IsZero() {
 		t.Errorf("unexpected context metadata: %+v", context)
 	}
@@ -415,8 +431,8 @@ func TestProjectContextReportsByteBudgetOmissions(t *testing.T) {
 	if err := json.Unmarshal(data, &context); err != nil {
 		t.Fatal(err)
 	}
-	if len(context.Knowledge) == 0 || len(context.Knowledge) >= 100 || !context.Truncated || context.MaxBytes != 4096 || context.Omitted.Knowledge != 101-len(context.Knowledge) {
+	if len(context.section("knowledge")) == 0 || len(context.section("knowledge")) >= 100 || !context.Truncated || context.MaxBytes != 4096 || context.omittedFor("knowledge") != 101-len(context.section("knowledge")) {
 		t.Errorf("large context must report its byte budget and omissions: %+v", context)
 	}
-	assertRecordIDs(t, context.Tasks, task)
+	assertRecordIDs(t, context.section("task"), task)
 }

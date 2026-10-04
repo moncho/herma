@@ -214,3 +214,28 @@ func TestRecallValidatesOptions(t *testing.T) {
 		}
 	}
 }
+
+func TestRecallIncludesUnreviewedCustomKinds(t *testing.T) {
+	s := testStore(t)
+	acceptKind(t, s, "bookmark", bookmarkDefinition(), "")
+	noRecall := bookmarkDefinition()
+	noRecall["policy"] = map[string]any{"recall": false}
+	acceptKind(t, s, "hidden", noRecall, "")
+	b := createRecord(t, s, CreateInput{Kind: "bookmark", Title: "Write-ahead logging", Fields: map[string]any{"url": "https://sqlite.org/wal.html"}})
+	createRecord(t, s, CreateInput{Kind: "hidden", Title: "Write-ahead logging", Fields: map[string]any{"url": "https://h.example"}})
+	k := accepted(t, s, "knowledge", "Write-ahead logging is on", "", "")
+	results, err := s.Recall(context.Background(), RecallOptions{Query: "write ahead logging"})
+	if err != nil || len(results) != 2 {
+		t.Fatalf("%+v %v", results, err)
+	}
+	byID := map[string]bool{}
+	for _, r := range results {
+		byID[r.ID] = r.Reviewed
+	}
+	if reviewed, ok := byID[k.ID]; !ok || !reviewed {
+		t.Error("accepted knowledge must be reviewed")
+	}
+	if reviewed, ok := byID[b.ID]; !ok || reviewed {
+		t.Error("bookmark must be present and unreviewed")
+	}
+}

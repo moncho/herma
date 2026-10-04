@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -84,6 +85,11 @@ INSERT INTO idempotency_compact(actor, key, fingerprint, record_id, version)
  SELECT actor, key, fingerprint, json_extract(data, '$.id'), json_extract(data, '$.version') FROM idempotency;
 DROP TABLE idempotency;
 ALTER TABLE idempotency_compact RENAME TO idempotency;`,
+	// 4: index textual field values next to title and body.
+	`DROP TABLE record_search;
+CREATE VIRTUAL TABLE record_search USING fts5(title, body, fields);
+INSERT INTO record_search(rowid, title, body, fields)
+ SELECT search_rowid, json_extract(data, '$.title'), json_extract(data, '$.body'), '' FROM records;`,
 }
 
 // Open opens a local SQLite database. The parent directory must already exist.
@@ -161,23 +167,32 @@ func (s *Store) Create(ctx context.Context, author Author, key string, input Cre
 	if record, replay, err := replayRecord(ctx, tx, author.Name, key, fingerprint); replay || err != nil {
 		return record, replay, err
 	}
+	k, err := resolveKind(ctx, tx, input.Kind, true)
+	if err != nil {
+		return Record{}, false, err
+	}
 	r := Record{
 		Kind: input.Kind, Title: input.Title, Body: input.Body, ProjectID: input.ProjectID,
 		Status: input.Status, Priority: input.Priority, Owner: input.Owner,
-		Tags: input.Tags, Links: input.Links, Sources: input.Sources,
+		Tags: input.Tags, Links: input.Links, Sources: input.Sources, Fields: input.Fields,
 		CreatedBy: author.Name, UpdatedBy: author.Name, Version: 1,
 	}
 	if r.Status == "" {
-		r.Status = defaultStatus[r.Kind]
+		r.Status = k.DefaultStatus()
 	}
-	if err := normalizeRecord(&r); err != nil {
+	if err := normalizeRecord(&r, k); err != nil {
 		return Record{}, false, err
 	}
-	if err := authorizeCreate(author, r); err != nil {
+	if err := authorizeCreate(author, k, r); err != nil {
 		return Record{}, false, err
 	}
 	if err := validateReferences(ctx, tx, r, ""); err != nil {
 		return Record{}, false, err
+	}
+	if r.Kind == "kind" {
+		if err := checkKindNameFree(ctx, tx, r); err != nil {
+			return Record{}, false, err
+		}
 	}
 	randomID := make([]byte, 16)
 	if _, err := rand.Read(randomID); err != nil {
@@ -186,8 +201,11 @@ func (s *Store) Create(ctx context.Context, author Author, key string, input Cre
 	r.ID = "rec_" + hex.EncodeToString(randomID)
 	r.CreatedAt = time.Now().UTC()
 	r.UpdatedAt = r.CreatedAt
-	markReview(author, "proposed", &r, r.CreatedAt)
-	if err := saveRecord(ctx, tx, r, "created", author.Name, key, fingerprint); err != nil {
+	markReview(author, k, "proposed", &r, r.CreatedAt)
+	if err := checkUnique(ctx, tx, k, r); err != nil {
+		return Record{}, false, err
+	}
+	if err := saveRecord(ctx, tx, r, searchText(k, r.Fields), "created", author.Name, key, fingerprint); err != nil {
 		return Record{}, false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -215,7 +233,7 @@ func (s *Store) Update(ctx context.Context, id string, author Author, key string
 	if input.Version <= 0 {
 		return Record{}, false, invalid("version must be positive")
 	}
-	if !hasContentChanges(input) && input.Archived == nil {
+	if !hasContentChanges(input) && input.Archived == nil && !input.AcceptPending {
 		return Record{}, false, invalid("at least one field must be provided")
 	}
 	r, err := getRecord(ctx, tx, id)
@@ -225,8 +243,20 @@ func (s *Store) Update(ctx context.Context, id string, author Author, key string
 	if r.Version != input.Version {
 		return Record{}, false, ErrConflict
 	}
+	k, err := resolveKind(ctx, tx, r.Kind, false)
+	if err != nil {
+		return Record{}, false, err
+	}
 	if r.Kind == "note" && hasContentChanges(input) {
 		return Record{}, false, invalid("notes are append-only; only archived may be changed")
+	}
+	if input.AcceptPending && (hasContentChanges(input) || input.Archived != nil) {
+		return Record{}, false, invalid("accept_pending cannot be combined with other changes")
+	}
+	// An accepted or retired kind's definition changes only through accept_pending,
+	// even when the new definition equals the current one.
+	if _, ok := input.Fields["definition"]; ok && r.Kind == "kind" && r.Status != "proposed" {
+		return Record{}, false, invalid("fields.definition: change an accepted kind through fields.pending and accept_pending")
 	}
 	old := r
 	oldProject := r.ProjectID
@@ -260,20 +290,39 @@ func (s *Store) Update(ctx context.Context, id string, author Author, key string
 	if input.Archived != nil {
 		r.Archived = *input.Archived
 	}
-	if err := normalizeRecord(&r); err != nil {
+	if input.Fields != nil {
+		r.Fields = patchFields(r.Fields, input.Fields)
+	}
+	if input.AcceptPending {
+		if err := acceptPending(ctx, tx, author, &r); err != nil {
+			return Record{}, false, err
+		}
+	}
+	if err := normalizeRecord(&r, k); err != nil {
 		return Record{}, false, err
 	}
-	if err := authorizeUpdate(author, old, r); err != nil {
+	if err := authorizeUpdate(author, k, old, r, input.AcceptPending && author.Role == RoleReviewer); err != nil {
 		return Record{}, false, err
 	}
 	if err := validateReferences(ctx, tx, r, oldProject); err != nil {
 		return Record{}, false, err
 	}
+	if err := checkUnique(ctx, tx, k, r); err != nil {
+		return Record{}, false, err
+	}
+	if r.Kind == "kind" && !r.Archived {
+		if err := checkKindNameFree(ctx, tx, r); err != nil {
+			return Record{}, false, err
+		}
+	}
 	r.Version++
 	r.UpdatedBy = author.Name
 	r.UpdatedAt = time.Now().UTC()
-	markReview(author, old.Status, &r, r.UpdatedAt)
-	if err := saveRecord(ctx, tx, r, "updated", author.Name, key, fingerprint); err != nil {
+	markReview(author, k, old.Status, &r, r.UpdatedAt)
+	if input.AcceptPending {
+		r.ReviewedBy, r.ReviewedAt = author.Name, &r.UpdatedAt
+	}
+	if err := saveRecord(ctx, tx, r, searchText(k, r.Fields), "updated", author.Name, key, fingerprint); err != nil {
 		return Record{}, false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -328,6 +377,26 @@ func (s *Store) List(ctx context.Context, options ListOptions) (ListResult, erro
 		return ListResult{}, err
 	}
 	defer tx.Rollback()
+	if options.Kind != "" {
+		k, found, err := lookupKind(ctx, tx, options.Kind)
+		if err != nil {
+			return ListResult{}, err
+		}
+		if !found {
+			return ListResult{}, invalid("invalid kind filter")
+		}
+		if options.Status != "" && !k.allows(options.Status) {
+			return ListResult{}, invalid("invalid status filter")
+		}
+	} else if options.Status != "" {
+		kinds, err := kindsFrom(ctx, tx)
+		if err != nil {
+			return ListResult{}, err
+		}
+		if !slices.ContainsFunc(kinds, func(k Kind) bool { return k.allows(options.Status) }) {
+			return ListResult{}, invalid("invalid status filter")
+		}
+	}
 	result := ListResult{Items: []Record{}, Limit: options.Limit, Offset: options.Offset}
 	if err := tx.QueryRowContext(ctx, "SELECT count(*)"+where, args...).Scan(&result.Total); err != nil {
 		return ListResult{}, err
@@ -347,9 +416,9 @@ func (s *Store) List(ctx context.Context, options ListOptions) (ListResult, erro
 		if err := rows.Scan(&data); err != nil {
 			return ListResult{}, err
 		}
-		var r Record
-		if err := json.Unmarshal([]byte(data), &r); err != nil {
-			return ListResult{}, fmt.Errorf("decode record: %w", err)
+		r, err := decodeRecord(data)
+		if err != nil {
+			return ListResult{}, err
 		}
 		result.Items = append(result.Items, r)
 	}
@@ -385,6 +454,9 @@ func (s *Store) History(ctx context.Context, id string) ([]Revision, error) {
 		if err := json.Unmarshal([]byte(data), &revision); err != nil {
 			return nil, fmt.Errorf("decode revision: %w", err)
 		}
+		if revision.Record.Fields == nil {
+			revision.Record.Fields = map[string]any{}
+		}
 		revisions = append(revisions, revision)
 	}
 	return revisions, rows.Err()
@@ -403,14 +475,23 @@ func getRecord(ctx context.Context, db rowQueryer, id string) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
+	return decodeRecord(data)
+}
+
+// decodeRecord reads a stored snapshot. Records written before typed fields
+// existed have no fields key; they decode with an empty object.
+func decodeRecord(data string) (Record, error) {
 	var r Record
 	if err := json.Unmarshal([]byte(data), &r); err != nil {
 		return Record{}, fmt.Errorf("decode record: %w", err)
 	}
+	if r.Fields == nil {
+		r.Fields = map[string]any{}
+	}
 	return r, nil
 }
 
-func saveRecord(ctx context.Context, tx *sql.Tx, r Record, action, actor, key, fingerprint string) error {
+func saveRecord(ctx context.Context, tx *sql.Tx, r Record, fieldsText, action, actor, key, fingerprint string) error {
 	data, err := json.Marshal(r)
 	if err != nil {
 		return err
@@ -424,7 +505,7 @@ func saveRecord(ctx context.Context, tx *sql.Tx, r Record, action, actor, key, f
 	err = tx.QueryRowContext(ctx, "SELECT search_rowid FROM records WHERE id = ?", r.ID).Scan(&searchRowID)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		result, err := tx.ExecContext(ctx, "INSERT INTO record_search(title, body) VALUES (?, ?)", r.Title, r.Body)
+		result, err := tx.ExecContext(ctx, "INSERT INTO record_search(title, body, fields) VALUES (?, ?, ?)", r.Title, r.Body, fieldsText)
 		if err != nil {
 			return err
 		}
@@ -434,7 +515,7 @@ func saveRecord(ctx context.Context, tx *sql.Tx, r Record, action, actor, key, f
 	case err != nil:
 		return err
 	default:
-		if _, err := tx.ExecContext(ctx, "UPDATE record_search SET title = ?, body = ? WHERE rowid = ?", r.Title, r.Body, searchRowID); err != nil {
+		if _, err := tx.ExecContext(ctx, "UPDATE record_search SET title = ?, body = ?, fields = ? WHERE rowid = ?", r.Title, r.Body, fieldsText, searchRowID); err != nil {
 			return err
 		}
 	}
@@ -496,21 +577,10 @@ WHERE i.actor = ? AND i.key = ?`, actor, key).Scan(&previous, &data)
 	if err := json.Unmarshal([]byte(data), &revision); err != nil {
 		return Record{}, false, fmt.Errorf("decode replay: %w", err)
 	}
+	if revision.Record.Fields == nil {
+		revision.Record.Fields = map[string]any{}
+	}
 	return revision.Record, true, nil
-}
-
-var defaultStatus = map[string]string{
-	"knowledge": "proposed", "principle": "proposed", "project": "planned",
-	"task": "open", "note": "published", "feedback": "open",
-}
-
-var statuses = map[string][]string{
-	"knowledge": {"proposed", "accepted", "rejected", "superseded"},
-	"principle": {"proposed", "accepted", "rejected", "superseded"},
-	"project":   {"planned", "active", "paused", "completed"},
-	"task":      {"open", "in_progress", "blocked", "done"},
-	"note":      {"published"},
-	"feedback":  {"open", "triaged", "resolved"},
 }
 
 func invalid(message string) error { return &ValidationError{Message: message} }
@@ -534,11 +604,17 @@ func validateAuthor(author Author, key string) error {
 	return nil
 }
 
-// durable kinds hold knowledge meant to outlive sessions and need review.
-func durable(kind string) bool { return kind == "knowledge" || kind == "principle" }
-
-func authorizeCreate(author Author, r Record) error {
-	if !durable(r.Kind) || author.Role == RoleReviewer || r.Status == "proposed" {
+func authorizeCreate(author Author, k Kind, r Record) error {
+	if k.Definition.Policy.Writers == RoleReviewer && author.Role != RoleReviewer {
+		return forbidden(fmt.Sprintf("only a reviewer can write %s records", k.Name))
+	}
+	if r.Kind == "kind" {
+		if _, ok := r.Fields["pending"]; ok {
+			return invalid("fields.pending: a new kind has no pending change")
+		}
+	}
+	judged := k.review() || r.Kind == "kind"
+	if !judged || author.Role == RoleReviewer || r.Status == "proposed" {
 		return nil
 	}
 	return forbidden(fmt.Sprintf("only a reviewer can create %s with status %s", r.Kind, r.Status))
@@ -546,8 +622,14 @@ func authorizeCreate(author Author, r Record) error {
 
 // authorizeUpdate runs inside the write transaction against the committed
 // record, so a concurrent status change cannot slip past it.
-func authorizeUpdate(author Author, old, next Record) error {
-	if !durable(old.Kind) || author.Role == RoleReviewer {
+func authorizeUpdate(author Author, k Kind, old, next Record, acceptingPending bool) error {
+	if k.Definition.Policy.Writers == RoleReviewer && author.Role != RoleReviewer {
+		return forbidden(fmt.Sprintf("only a reviewer can write %s records", k.Name))
+	}
+	if old.Kind == "kind" {
+		return authorizeKindUpdate(author, old, next, acceptingPending)
+	}
+	if !k.review() || author.Role == RoleReviewer {
 		return nil
 	}
 	if old.Status != "proposed" {
@@ -559,10 +641,10 @@ func authorizeUpdate(author Author, old, next Record) error {
 	return nil
 }
 
-// markReview records who last judged a durable record. Only reviewers can
-// reach a status other than proposed, so author is a reviewer when it applies.
-func markReview(author Author, previousStatus string, r *Record, at time.Time) {
-	if !durable(r.Kind) || r.Status == previousStatus {
+// markReview records who last judged a reviewed record or a kind. Only
+// reviewers can move such records away from proposed.
+func markReview(author Author, k Kind, previousStatus string, r *Record, at time.Time) {
+	if !(k.review() || r.Kind == "kind") || r.Status == previousStatus {
 		return
 	}
 	if r.Status == "proposed" {
@@ -572,24 +654,7 @@ func markReview(author Author, previousStatus string, r *Record, at time.Time) {
 	r.ReviewedBy, r.ReviewedAt = author.Name, &at
 }
 
-func validStatus(kind, status string) bool {
-	for k, values := range statuses {
-		if kind != "" && kind != k {
-			continue
-		}
-		for _, value := range values {
-			if value == status {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func normalizeRecord(r *Record) error {
-	if _, ok := defaultStatus[r.Kind]; !ok {
-		return invalid("kind must be knowledge, principle, project, task, note, or feedback")
-	}
+func normalizeRecord(r *Record, k Kind) error {
 	r.Title = strings.TrimSpace(r.Title)
 	if r.Title == "" || !utf8.ValidString(r.Title) || utf8.RuneCountInString(r.Title) > 300 {
 		return invalid("title must contain 1 to 300 characters")
@@ -597,7 +662,7 @@ func normalizeRecord(r *Record) error {
 	if len(r.Body) > 64*1024 || !utf8.ValidString(r.Body) {
 		return invalid("body must be valid UTF-8 and at most 64 KiB")
 	}
-	if !validStatus(r.Kind, r.Status) {
+	if !k.allows(r.Status) {
 		return invalid("status is invalid for this record kind")
 	}
 	if r.Priority < 0 || r.Priority > 5 {
@@ -623,10 +688,21 @@ func normalizeRecord(r *Record) error {
 	if r.Sources, err = normalizeStrings(r.Sources, "sources", 50, 2048, false); err != nil {
 		return err
 	}
-	if durable(r.Kind) && r.Status == "accepted" && len(r.Sources) == 0 {
+	if k.review() && r.Status == "accepted" && len(r.Sources) == 0 {
 		return invalid(fmt.Sprintf("accepted %s requires at least one source", r.Kind))
 	}
-	return nil
+	if k.ProjectID != "" && r.ProjectID != k.ProjectID {
+		return invalid(fmt.Sprintf("records of kind %q must belong to project %s", k.Name, k.ProjectID))
+	}
+	if r.Kind == "kind" {
+		if err := validateKindName(*r); err != nil {
+			return err
+		}
+		r.Fields, err = normalizeKindFields(r.Fields)
+	} else {
+		r.Fields, err = normalizeFields(k.Definition, r.Fields)
+	}
+	return err
 }
 
 func normalizeStrings(values []string, field string, maxItems, maxBytes int, lower bool) ([]string, error) {
@@ -679,16 +755,11 @@ func validateReferences(ctx context.Context, tx *sql.Tx, r Record, oldProject st
 }
 
 func hasContentChanges(input UpdateInput) bool {
-	return input.Title != nil || input.Body != nil || input.ProjectID != nil || input.Status != nil || input.Priority != nil || input.Owner != nil || input.Tags != nil || input.Links != nil || input.Sources != nil
+	return input.Title != nil || input.Body != nil || input.ProjectID != nil || input.Status != nil || input.Priority != nil || input.Owner != nil || input.Tags != nil || input.Links != nil || input.Sources != nil || input.Fields != nil
 }
 
 func validateList(o *ListOptions) error {
-	if o.Kind != "" {
-		if _, ok := defaultStatus[o.Kind]; !ok {
-			return invalid("invalid kind filter")
-		}
-	}
-	if o.Status != "" && !validStatus(o.Kind, o.Status) {
+	if o.Kind == "" && o.Status != "" && !namePattern.MatchString(o.Status) {
 		return invalid("invalid status filter")
 	}
 	if o.Global && o.ProjectID != "" {
@@ -722,7 +793,7 @@ func validateList(o *ListOptions) error {
 }
 
 // Split punctuation so FTS operators, quotes, and column selectors are always
-// ordinary search terms. Matching requires every term in either title or body.
+// ordinary search terms. Matching requires every term in title, body or fields.
 func plainTextQuery(query string) string {
 	tokens := strings.FieldsFunc(query, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsNumber(r) && !unicode.IsMark(r) })
 	quoted := make([]string, 0, len(tokens))

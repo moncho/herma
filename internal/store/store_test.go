@@ -324,10 +324,14 @@ func TestNotesAreAppendOnlyButArchivable(t *testing.T) {
 func TestValidationAndDefaults(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	for kind, status := range defaultStatus {
-		r := createRecord(t, s, CreateInput{Kind: kind, Title: "Default status"})
-		if r.Status != status {
-			t.Errorf("%s default=%q, want %q", kind, r.Status, status)
+	for _, name := range builtinOrder {
+		if name == "kind" {
+			continue // kind records need a definition; see kindrecords_test.go
+		}
+		k := builtinKinds[name]
+		r := createRecord(t, s, CreateInput{Kind: name, Title: "Default status"})
+		if r.Status != k.DefaultStatus() {
+			t.Errorf("%s default=%q, want %q", name, r.Status, k.DefaultStatus())
 		}
 	}
 	for name, input := range map[string]CreateInput{
