@@ -153,7 +153,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/v1/schema":
 		if method(w, r, http.MethodGet) {
-			writeJSON(w, http.StatusOK, schemaDocument())
+			kinds, err := h.store.Kinds(r.Context())
+			if err != nil {
+				storeError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, schemaDocument(kinds))
 		}
 	case "/v1/whoami":
 		if method(w, r, http.MethodGet) {
@@ -523,7 +528,12 @@ func badRequest(w http.ResponseWriter, err error) {
 }
 func storeError(w http.ResponseWriter, err error) {
 	var invalid *store.ValidationError
+	var duplicate *store.DuplicateError
 	switch {
+	case errors.As(err, &duplicate):
+		writeJSON(w, http.StatusConflict, map[string]any{"error": map[string]string{
+			"code": "duplicate", "message": err.Error(), "field": duplicate.Field, "existing_id": duplicate.ExistingID,
+		}})
 	case errors.As(err, &invalid):
 		badRequest(w, err)
 	case errors.Is(err, store.ErrNotFound):

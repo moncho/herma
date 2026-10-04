@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -48,7 +49,7 @@ func TestRecallReturnsRankedResultsWithinBudget(t *testing.T) {
 			t.Fatalf("budget %d: no ranked results: %+v", budget, packet)
 		}
 		for i, result := range packet.Results {
-			if result.Rank != i+1 || result.Status != "accepted" || result.ReviewedBy == "" {
+			if result.Rank != i+1 || result.Status != "accepted" || !result.Reviewed || (result.ReviewedBy == "" && !slices.Contains(result.TruncatedFields, "reviewed_by")) {
 				t.Errorf("budget %d result %d: %+v", budget, i, result)
 			}
 		}

@@ -97,13 +97,20 @@ func run() error {
 		return err
 	}
 	var read struct {
-		Notes []store.Record `json:"notes"`
-		Tasks []store.Record `json:"tasks"`
+		Sections []struct {
+			Kind    string         `json:"kind"`
+			Records []store.Record `json:"records"`
+		} `json:"sections"`
 	}
 	if err = json.Unmarshal(packet, &read); err != nil {
 		return err
 	}
-	if len(read.Notes) != 1 || read.Notes[0].ID != initialNote.ID || len(read.Tasks) != 1 || read.Tasks[0].ID != task.ID {
+	sections := map[string][]store.Record{}
+	for _, s := range read.Sections {
+		sections[s.Kind] = s.Records
+	}
+	notes, tasks := sections["note"], sections["task"]
+	if len(notes) != 1 || notes[0].ID != initialNote.ID || len(tasks) != 1 || tasks[0].ID != task.ID {
 		return fmt.Errorf("fresh-session context did not contain the expected handoff and coordination record")
 	}
 	// Context is a bounded summary. Fetch the complete record and its current

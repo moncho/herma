@@ -14,43 +14,66 @@ import (
 // metadata, tags, and archival flags are intentionally outside this projection.
 // Every further omission or shortening is identified on the individual record.
 type contextRecord struct {
-	ID              string     `json:"id"`
-	Kind            string     `json:"kind"`
-	Title           string     `json:"title"`
-	Body            string     `json:"body"`
-	Status          string     `json:"status"`
-	Version         int64      `json:"version"`
-	Priority        int        `json:"priority,omitempty"`
-	ProjectID       string     `json:"project_id,omitempty"`
-	Owner           string     `json:"owner,omitempty"`
-	UpdatedBy       string     `json:"updated_by,omitempty"`
-	UpdatedAt       *time.Time `json:"updated_at,omitempty"`
-	Sources         []string   `json:"sources,omitempty"`
-	Links           []string   `json:"links,omitempty"`
-	ReviewedBy      string     `json:"reviewed_by,omitempty"`
-	ReviewedAt      *time.Time `json:"reviewed_at,omitempty"`
-	BodyTruncated   bool       `json:"body_truncated,omitempty"`
-	TruncatedFields []string   `json:"truncated_fields,omitempty"`
+	ID              string         `json:"id"`
+	Kind            string         `json:"kind"`
+	Title           string         `json:"title"`
+	Body            string         `json:"body"`
+	Status          string         `json:"status"`
+	Version         int64          `json:"version"`
+	Priority        int            `json:"priority,omitempty"`
+	ProjectID       string         `json:"project_id,omitempty"`
+	Owner           string         `json:"owner,omitempty"`
+	UpdatedBy       string         `json:"updated_by,omitempty"`
+	UpdatedAt       *time.Time     `json:"updated_at,omitempty"`
+	Sources         []string       `json:"sources,omitempty"`
+	Links           []string       `json:"links,omitempty"`
+	Fields          map[string]any `json:"fields,omitempty"`
+	ReviewedBy      string         `json:"reviewed_by,omitempty"`
+	ReviewedAt      *time.Time     `json:"reviewed_at,omitempty"`
+	BodyTruncated   bool           `json:"body_truncated,omitempty"`
+	TruncatedFields []string       `json:"truncated_fields,omitempty"`
+}
+
+type contextSection struct {
+	Kind    string          `json:"kind"`
+	Heading string          `json:"heading"`
+	Records []contextRecord `json:"records"`
+	Total   int             `json:"total"`
+	Omitted int             `json:"omitted"`
 }
 
 type projectContext struct {
-	Scope          string          `json:"scope"`
-	Recall         string          `json:"recall"`
-	Project        contextRecord   `json:"project"`
-	Tasks          []contextRecord `json:"tasks"`
-	Feedback       []contextRecord `json:"feedback"`
-	Notes          []contextRecord `json:"notes"`
-	Knowledge      []contextRecord `json:"knowledge"`
-	Principles     []contextRecord `json:"principles"`
-	GeneratedAt    time.Time       `json:"generated_at"`
-	MaxBytes       int             `json:"max_bytes"`
-	IncludeDurable bool            `json:"include_durable"`
-	Truncated      bool            `json:"truncated"`
-	Omitted        contextCounts   `json:"omitted"`
+	Scope             string           `json:"scope"`
+	Recall            string           `json:"recall"`
+	Project           contextRecord    `json:"project"`
+	Kinds             []string         `json:"kinds"`
+	KindsMore         int              `json:"kinds_more"`
+	Principles        []contextRecord  `json:"principles"`
+	PrinciplesOmitted int              `json:"principles_omitted"`
+	Sections          []contextSection `json:"sections"`
+	// CustomOmitted counts the records of custom kinds whose sections are not
+	// listed because none of their records fit.
+	CustomOmitted  int       `json:"custom_omitted"`
+	GeneratedAt    time.Time `json:"generated_at"`
+	MaxBytes       int       `json:"max_bytes"`
+	IncludeDurable bool      `json:"include_durable"`
+	Truncated      bool      `json:"truncated"`
 	// PrinciplesLabel is "changed" when principles replace the rules file a
 	// Claude session already loaded, or "replace" when herma could not update that
 	// file. Only the text format shows it.
 	PrinciplesLabel string `json:"-"`
+}
+
+func (c projectContext) anyOmitted() bool {
+	if c.PrinciplesOmitted > 0 || c.CustomOmitted > 0 {
+		return true
+	}
+	for _, s := range c.Sections {
+		if s.Omitted > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // contextFormat renders a packed context and measures one record preview, and
@@ -90,26 +113,78 @@ func packContext(snapshot contextSnapshot, opts contextOptions) ([]byte, error) 
 	if !ok {
 		return nil, errors.New("project identity does not fit the context budget")
 	}
+	shownKinds := snapshot.Kinds[:min(len(snapshot.Kinds), maxKindsInLine)]
 	result := projectContext{
 		Scope: contextScope, Recall: recallHint, Project: project, GeneratedAt: snapshot.GeneratedAt,
-		Tasks: []contextRecord{}, Feedback: []contextRecord{}, Notes: []contextRecord{},
-		Knowledge: []contextRecord{}, Principles: []contextRecord{},
-		MaxBytes: budget, IncludeDurable: includeDurable, Omitted: snapshot.Totals,
-		PrinciplesLabel: opts.principlesLabel,
+		Kinds: shownKinds, KindsMore: len(snapshot.Kinds) - len(shownKinds),
+		Principles: []contextRecord{}, PrinciplesOmitted: snapshot.PrinciplesTotal,
+		Sections: make([]contextSection, 0, len(snapshot.Sections)),
+		MaxBytes: budget, IncludeDurable: includeDurable, PrinciplesLabel: opts.principlesLabel,
 	}
-	if !includeDurable {
-		result.Omitted.Knowledge = 0
+	// Built-in sections are always listed. A custom section is listed only once
+	// one of its records is placed, so the packet's fixed part stays small
+	// however many kinds exist; until then its records count as custom_omitted.
+	listed := make([]int, len(snapshot.Sections))
+	for i, s := range snapshot.Sections {
+		listed[i] = -1
+		if s.Custom {
+			result.CustomOmitted += s.Total
+			continue
+		}
+		listed[i] = len(result.Sections)
+		result.Sections = append(result.Sections, contextSection{Kind: s.Kind, Heading: s.Heading, Records: []contextRecord{}, Total: s.Total, Omitted: s.Total})
 	}
 	clipped := recordClipped(project)
-	result.Truncated = clipped || result.Omitted.any()
+	result.Truncated = clipped || result.anyOmitted()
 	data, err := opts.format.encode(result)
+	// Kind names are the only part of the fixed packet that grows with the
+	// number of kinds, so names that do not fit move into kinds_more.
+	for err == nil && len(data) > budget && len(result.Kinds) > 0 {
+		result.Kinds = result.Kinds[:len(result.Kinds)-1]
+		result.KindsMore++
+		data, err = opts.format.encode(result)
+	}
 	if err != nil || len(data) > budget {
 		return nil, errors.New("project context metadata does not fit the context budget")
 	}
+	// section indexes snapshot.Sections; -1 means principles.
 	type candidate struct {
 		record  store.Record
-		target  *[]contextRecord
-		omitted *int
+		section int
+	}
+	// place adds or removes (undo) one record in its packet list, listing or
+	// unlisting a custom section as its first record comes or goes.
+	place := func(c candidate, record contextRecord, undo bool) {
+		if c.section < 0 {
+			if undo {
+				result.Principles = result.Principles[:len(result.Principles)-1]
+				result.PrinciplesOmitted++
+			} else {
+				result.Principles = append(result.Principles, record)
+				result.PrinciplesOmitted--
+			}
+			return
+		}
+		s := snapshot.Sections[c.section]
+		if !undo && listed[c.section] < 0 {
+			listed[c.section] = len(result.Sections)
+			result.Sections = append(result.Sections, contextSection{Kind: s.Kind, Heading: s.Heading, Records: []contextRecord{}, Total: s.Total, Omitted: s.Total})
+			result.CustomOmitted -= s.Total
+		}
+		target := &result.Sections[listed[c.section]]
+		if !undo {
+			target.Records = append(target.Records, record)
+			target.Omitted--
+			return
+		}
+		target.Records = target.Records[:len(target.Records)-1]
+		target.Omitted++
+		if s.Custom && len(target.Records) == 0 {
+			// Custom sections are listed in order, so this one is the last.
+			result.Sections = result.Sections[:len(result.Sections)-1]
+			listed[c.section] = -1
+			result.CustomOmitted += s.Total
+		}
 	}
 	// add places one candidate if the packet stays within limit. It reports
 	// false when no space is left at all, so callers can stop early.
@@ -128,11 +203,10 @@ func packContext(snapshot contextSnapshot, opts contextOptions) ([]byte, error) 
 			if !fits {
 				return true, nil
 			}
-			*c.target = append(*c.target, record)
-			*c.omitted--
+			place(c, record, false)
 			previousClipped := clipped
 			clipped = clipped || recordClipped(record)
-			result.Truncated = clipped || result.Omitted.any()
+			result.Truncated = clipped || result.anyOmitted()
 			next, err := opts.format.encode(result)
 			if err != nil {
 				return false, err
@@ -142,10 +216,9 @@ func packContext(snapshot contextSnapshot, opts contextOptions) ([]byte, error) 
 				return true, nil
 			}
 			// Keep the final check independent of size-estimation assumptions.
-			*c.target = (*c.target)[:len(*c.target)-1]
-			*c.omitted++
+			place(c, record, true)
 			clipped = previousClipped
-			result.Truncated = clipped || result.Omitted.any()
+			result.Truncated = clipped || result.anyOmitted()
 			available -= len(next) - limit
 		}
 		return true, nil
@@ -155,34 +228,25 @@ func packContext(snapshot contextSnapshot, opts contextOptions) ([]byte, error) 
 	// The clamp keeps the hard max_bytes guarantee independent of metadata size.
 	principleLimit := min(budget, len(data)+budget/2)
 	for _, record := range snapshot.Principles {
-		if more, err := add(candidate{record, &result.Principles, &result.Omitted.Principles}, principleLimit); err != nil {
+		if more, err := add(candidate{record, -1}, principleLimit); err != nil {
 			return nil, err
 		} else if !more {
 			break
 		}
 	}
-	coordination := make([]candidate, 0, len(snapshot.Tasks)+len(snapshot.Feedback))
-	for _, record := range snapshot.Tasks {
-		coordination = append(coordination, candidate{record, &result.Tasks, &result.Omitted.Tasks})
-	}
-	for _, record := range snapshot.Feedback {
-		coordination = append(coordination, candidate{record, &result.Feedback, &result.Omitted.Feedback})
-	}
-	sort.Slice(coordination, func(i, j int) bool {
-		return contextRecordLess(coordination[i].record, coordination[j].record, false)
-	})
-	candidates := coordination
-	// Notes describe handoffs and recent session events, so recency outweighs
-	// their priority. Knowledge is always considered last and opt-in.
-	notes := append([]store.Record(nil), snapshot.Notes...)
-	sort.Slice(notes, func(i, j int) bool { return contextRecordLess(notes[i], notes[j], true) })
-	for _, record := range notes {
-		candidates = append(candidates, candidate{record, &result.Notes, &result.Omitted.Notes})
-	}
-	if includeDurable {
-		for _, record := range snapshot.Knowledge {
-			candidates = append(candidates, candidate{record, &result.Knowledge, &result.Omitted.Knowledge})
+	// Sections in one tier compete by priority (or recency); each later tier
+	// gets the space the earlier ones leave.
+	var candidates []candidate
+	for i := 0; i < len(snapshot.Sections); {
+		tier, recent := snapshot.Sections[i].Tier, snapshot.Sections[i].RecentFirst
+		var group []candidate
+		for ; i < len(snapshot.Sections) && snapshot.Sections[i].Tier == tier; i++ {
+			for _, record := range snapshot.Sections[i].Records {
+				group = append(group, candidate{record, i})
+			}
 		}
+		sort.SliceStable(group, func(a, b int) bool { return contextRecordLess(group[a].record, group[b].record, recent) })
+		candidates = append(candidates, group...)
 	}
 	for _, c := range candidates {
 		if more, err := add(c, budget); err != nil {
@@ -214,6 +278,9 @@ func fitContextRecord(record store.Record, budget int, size func(contextRecord) 
 		UpdatedAt: &record.UpdatedAt, Sources: record.Sources, Links: record.Links,
 		ReviewedBy: record.ReviewedBy, ReviewedAt: record.ReviewedAt,
 	}
+	if len(record.Fields) > 0 {
+		out.Fields = record.Fields
+	}
 	if size(out) <= budget {
 		return out, true
 	}
@@ -223,6 +290,11 @@ func fitContextRecord(record store.Record, budget int, size func(contextRecord) 
 	out.Body = ""
 	out.BodyTruncated = record.Body != ""
 	metadataBudget := min(budget, max(384, budget/2))
+	// Typed fields go first and whole: a shortened value could mislead.
+	if out.Fields != nil && size(out) > metadataBudget {
+		out.Fields = nil
+		markContextField(&out, "fields")
+	}
 	if size(out) > metadataBudget {
 		if kept := fitReferences(out.Sources, min(256, metadataBudget/4)); len(kept) < len(out.Sources) {
 			out.Sources = kept

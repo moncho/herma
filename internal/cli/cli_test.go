@@ -292,13 +292,12 @@ func TestFreshAgentCLIWorkflowAndRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	var contextResult struct {
-		Tasks     []store.Record `json:"tasks"`
-		Knowledge []store.Record `json:"knowledge"`
+		Sections []contextSection `json:"sections"`
 	}
 	if err := json.Unmarshal(runCommand("context", "--project", project.ID, "--format", "json"), &contextResult); err != nil {
 		t.Fatal(err)
 	}
-	if len(contextResult.Tasks) != 1 || len(contextResult.Knowledge) != 0 || contextResult.Tasks[0].ID != task.ID {
+	if tasks := sectionRecords(contextResult.Sections, "task"); len(tasks) != 1 || len(sectionRecords(contextResult.Sections, "knowledge")) != 0 || tasks[0].ID != task.ID {
 		t.Fatalf("fresh agent did not retrieve project context: %#v", contextResult)
 	}
 	args := []string{"update", task.ID, "--version", "1", "--status", "in_progress", "--request-id", "claim-task"}
@@ -315,4 +314,19 @@ func TestFreshAgentCLIWorkflowAndRetry(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "conflict") || !strings.Contains(err.Error(), "--request-id") || stdout.Len() != 0 {
 		t.Fatalf("stale write did not report conflict with retry key: %v", err)
 	}
+}
+
+// contextSection decodes one section of a JSON context packet.
+type contextSection struct {
+	Kind    string         `json:"kind"`
+	Records []store.Record `json:"records"`
+}
+
+func sectionRecords(sections []contextSection, kind string) []store.Record {
+	for _, s := range sections {
+		if s.Kind == kind {
+			return s.Records
+		}
+	}
+	return nil
 }

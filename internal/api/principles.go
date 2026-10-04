@@ -65,7 +65,7 @@ func (h *Handler) principleSnapshot(ctx context.Context, projectID string) ([]st
 	if project.Archived {
 		return nil, 0, errProjectArchived
 	}
-	return h.contextRecords(ctx, projectID, "principle", []string{"accepted"}, true)
+	return h.contextRecords(ctx, projectID, "principle", []string{"accepted"}, true, false, contextLimit)
 }
 
 // renderPrinciples writes the rules file in context order with bodies

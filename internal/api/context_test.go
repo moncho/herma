@@ -67,20 +67,20 @@ func TestContextDefaultsToCoordinationAndPrinciplesAndOptsInKnowledge(t *testing
 	createContextRecord(t, s, store.CreateInput{Kind: "feedback", Title: "Already handled", Status: "resolved", ProjectID: project.ID})
 
 	packet := requestContext(t, h, project.ID, "", defaultContextBytes)
-	if packet.IncludeDurable || packet.Truncated || packet.Omitted.any() || len(packet.Knowledge) != 0 || len(packet.Principles) != 1 || packet.Principles[0].ID != principle.ID {
+	if packet.IncludeDurable || packet.Truncated || packet.anyOmitted() || len(packet.section("knowledge")) != 0 || len(packet.Principles) != 1 || packet.Principles[0].ID != principle.ID {
 		t.Errorf("default context must include accepted principles and exclude knowledge without claiming truncation: %+v", packet)
 	}
 	if packet.Recall != recallHint {
 		t.Errorf("recall hint = %q", packet.Recall)
 	}
-	if packet.Project.ID != project.ID || len(packet.Tasks) != 1 || packet.Tasks[0].ID != task.ID || len(packet.Feedback) != 1 || packet.Feedback[0].ID != feedback.ID || len(packet.Notes) != 1 || packet.Notes[0].ID != note.ID {
+	if packet.Project.ID != project.ID || len(packet.section("task")) != 1 || packet.section("task")[0].ID != task.ID || len(packet.section("feedback")) != 1 || packet.section("feedback")[0].ID != feedback.ID || len(packet.section("note")) != 1 || packet.section("note")[0].ID != note.ID {
 		t.Fatalf("coordination context missing active records: %+v", packet)
 	}
-	if packet.Tasks[0].Body != task.Body || packet.Tasks[0].Owner != task.Owner || !reflect.DeepEqual(packet.Tasks[0].Sources, task.Sources) || packet.Tasks[0].UpdatedBy != task.UpdatedBy || packet.Tasks[0].Version != task.Version {
+	if packet.section("task")[0].Body != task.Body || packet.section("task")[0].Owner != task.Owner || !reflect.DeepEqual(packet.section("task")[0].Sources, task.Sources) || packet.section("task")[0].UpdatedBy != task.UpdatedBy || packet.section("task")[0].Version != task.Version {
 		t.Error("small coordination record lost relevant content or provenance")
 	}
 	optIn := requestContext(t, h, project.ID, "&include_durable=true", defaultContextBytes)
-	if !optIn.IncludeDurable || optIn.Truncated || len(optIn.Knowledge) != 1 || optIn.Knowledge[0].ID != knowledge.ID || len(optIn.Principles) != 1 || optIn.Principles[0].ID != principle.ID {
+	if !optIn.IncludeDurable || optIn.Truncated || len(optIn.section("knowledge")) != 1 || optIn.section("knowledge")[0].ID != knowledge.ID || len(optIn.Principles) != 1 || optIn.Principles[0].ID != principle.ID {
 		t.Errorf("durable opt-in did not preserve accepted global/project semantics: %+v", optIn)
 	}
 	for _, suffix := range []string{"&max_bytes=2048", "&max_bytes=65536"} {
@@ -147,16 +147,16 @@ func TestContextByteBudgetIncludesUnicodeEscapingAndHugeMetadata(t *testing.T) {
 				t.Fatalf("oversized project lost identity or clipping metadata: %+v", packet.Project)
 			}
 			all := []contextRecord{packet.Project}
-			for _, group := range [][]contextRecord{packet.Tasks, packet.Feedback, packet.Notes, packet.Knowledge, packet.Principles} {
+			for _, group := range [][]contextRecord{packet.section("task"), packet.section("feedback"), packet.section("note"), packet.section("knowledge"), packet.Principles} {
 				all = append(all, group...)
 			}
 			for _, preview := range all {
 				assertContextPreview(t, originals[preview.ID], preview)
 			}
 			for name, counts := range map[string][2]int{
-				"tasks": {len(packet.Tasks), packet.Omitted.Tasks}, "feedback": {len(packet.Feedback), packet.Omitted.Feedback},
-				"notes": {len(packet.Notes), packet.Omitted.Notes}, "knowledge": {len(packet.Knowledge), packet.Omitted.Knowledge},
-				"principles": {len(packet.Principles), packet.Omitted.Principles},
+				"tasks": {len(packet.section("task")), packet.omittedFor("task")}, "feedback": {len(packet.section("feedback")), packet.omittedFor("feedback")},
+				"notes": {len(packet.section("note")), packet.omittedFor("note")}, "knowledge": {len(packet.section("knowledge")), packet.omittedFor("knowledge")},
+				"principles": {len(packet.Principles), packet.PrinciplesOmitted},
 			} {
 				if counts[0]+counts[1] != 1 {
 					t.Errorf("%s omission count does not describe the full eligible set: %v", name, counts)
@@ -189,6 +189,7 @@ func assertContextPreview(t *testing.T, original store.Record, preview contextRe
 		"sources": len(original.Sources) != len(preview.Sources), "links": len(original.Links) != len(preview.Links),
 		"reviewed_by": original.ReviewedBy != preview.ReviewedBy,
 		"reviewed_at": (original.ReviewedAt == nil) != (preview.ReviewedAt == nil),
+		"fields":      len(original.Fields) != len(preview.Fields),
 	} {
 		if changed && !flags[field] {
 			t.Errorf("context silently changed %s for %s", field, original.ID)
@@ -217,13 +218,13 @@ func TestContextPrioritizesCoordinationThenRecentNotesOverDurable(t *testing.T) 
 	latest := createContextRecord(t, s, store.CreateInput{Kind: "note", Title: "Newest handoff has lower priority", ProjectID: project.ID, Priority: 0, Body: strings.Repeat("recent ", 100)})
 	createContextRecord(t, s, store.CreateInput{Kind: "knowledge", Title: "Durable fact with high priority", Status: "accepted", Sources: []string{"https://example.com/review"}, Priority: 5, Body: strings.Repeat("durable ", 100)})
 	packet := requestContext(t, h, project.ID, "&max_bytes=4096&include_durable=true", 4096)
-	if len(packet.Tasks) != 1 || packet.Tasks[0].ID != task.ID || len(packet.Feedback) != 1 || packet.Feedback[0].ID != feedback.ID {
+	if len(packet.section("task")) != 1 || packet.section("task")[0].ID != task.ID || len(packet.section("feedback")) != 1 || packet.section("feedback")[0].ID != feedback.ID {
 		t.Error("high-priority notes or durable knowledge crowded out session intentions and feedback")
 	}
-	if len(packet.Notes) == 0 || packet.Notes[0].ID != latest.ID || packet.Omitted.Notes != 106-len(packet.Notes) {
-		t.Errorf("context missed the latest handoff or understated omitted notes: notes = %+v; omissions = %+v", packet.Notes, packet.Omitted)
+	if len(packet.section("note")) == 0 || packet.section("note")[0].ID != latest.ID || packet.omittedFor("note") != 106-len(packet.section("note")) {
+		t.Errorf("context missed the latest handoff or understated omitted notes: notes = %+v; omissions = %+v", packet.section("note"), packet.Sections)
 	}
-	if len(packet.Knowledge) != 0 || packet.Omitted.Knowledge != 1 || !packet.Truncated {
+	if len(packet.section("knowledge")) != 0 || packet.omittedFor("knowledge") != 1 || !packet.Truncated {
 		t.Errorf("durable data took space from recent handoffs: %+v", packet)
 	}
 }
@@ -254,7 +255,7 @@ func TestConcurrentContextRequestsKeepIndependentBudgets(t *testing.T) {
 	close(results)
 	for result := range results {
 		packet := decodeContextResponse(t, result.value, result.budget)
-		if packet.Project.ID != project.ID || !packet.Truncated || packet.Omitted.Notes != 12-len(packet.Notes) {
+		if packet.Project.ID != project.ID || !packet.Truncated || packet.omittedFor("note") != 12-len(packet.section("note")) {
 			t.Errorf("concurrent context requests leaked state or budget: %+v", packet)
 		}
 	}
@@ -276,8 +277,8 @@ func TestContextPrinciplesUseAtMostHalfAndYieldUnusedSpace(t *testing.T) {
 		data, _ := json.Marshal(p)
 		principleBytes += len(data) + 1
 	}
-	if len(packet.Principles) == 0 || principleBytes > budget/2 || principleBytes <= budget/4 || packet.Omitted.Principles != 20-len(packet.Principles) || len(packet.Tasks) == 0 {
-		t.Fatalf("principles %d (%d bytes, omitted %d), tasks %d", len(packet.Principles), principleBytes, packet.Omitted.Principles, len(packet.Tasks))
+	if len(packet.Principles) == 0 || principleBytes > budget/2 || principleBytes <= budget/4 || packet.PrinciplesOmitted != 20-len(packet.Principles) || len(packet.section("task")) == 0 {
+		t.Fatalf("principles %d (%d bytes, omitted %d), tasks %d", len(packet.Principles), principleBytes, packet.PrinciplesOmitted, len(packet.section("task")))
 	}
 	// With one tiny principle, coordination gets the unused principle share.
 	h2, s2 := apiTestHandler(t, nil)
@@ -298,7 +299,7 @@ func TestContextClipsAnOversizedPrinciple(t *testing.T) {
 	createContextRecord(t, s, store.CreateInput{Kind: "principle", Title: "Huge rule", Body: strings.Repeat("rule ", 4000), Status: "accepted", Sources: []string{"https://example.com/review"}, ProjectID: project.ID})
 	task := createContextRecord(t, s, store.CreateInput{Kind: "task", Title: "Keep working", ProjectID: project.ID})
 	packet := requestContext(t, h, project.ID, "&max_bytes=2048", 2048)
-	if len(packet.Principles) != 1 || !packet.Principles[0].BodyTruncated || len(packet.Tasks) != 1 || packet.Tasks[0].ID != task.ID {
+	if len(packet.Principles) != 1 || !packet.Principles[0].BodyTruncated || len(packet.section("task")) != 1 || packet.section("task")[0].ID != task.ID {
 		t.Fatalf("oversized principle: %+v", packet)
 	}
 }
@@ -310,7 +311,7 @@ func TestContextNeverLoadsUnacceptedPrinciples(t *testing.T) {
 	for _, status := range []string{"rejected", "superseded"} {
 		createContextRecord(t, s, store.CreateInput{Kind: "principle", Title: status + " rule", Status: status, ProjectID: project.ID})
 	}
-	if packet := requestContext(t, h, project.ID, "", defaultContextBytes); len(packet.Principles) != 0 || packet.Omitted.Principles != 0 {
+	if packet := requestContext(t, h, project.ID, "", defaultContextBytes); len(packet.Principles) != 0 || packet.PrinciplesOmitted != 0 {
 		t.Fatalf("unaccepted principles loaded: %+v", packet)
 	}
 }
@@ -320,4 +321,25 @@ func TestRecallHintWording(t *testing.T) {
 	if recallHint != want {
 		t.Errorf("recallHint = %q, want %q", recallHint, want)
 	}
+}
+
+func (c projectContext) section(kind string) []contextRecord {
+	for _, s := range c.Sections {
+		if s.Kind == kind {
+			return s.Records
+		}
+	}
+	return nil
+}
+
+func (c projectContext) omittedFor(kind string) int {
+	if kind == "principle" {
+		return c.PrinciplesOmitted
+	}
+	for _, s := range c.Sections {
+		if s.Kind == kind {
+			return s.Omitted
+		}
+	}
+	return 0
 }

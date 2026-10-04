@@ -225,7 +225,7 @@ func TestStalledResponseDoesNotBlockOtherRequests(t *testing.T) {
 				if err := json.Unmarshal(w.Body.Bytes(), &snapshot); err != nil {
 					t.Fatal(err)
 				}
-				if snapshot.Project.ID != project.ID || len(snapshot.Tasks) != 1 || snapshot.Tasks[0].ID != task.ID || len(snapshot.Notes) != 0 {
+				if snapshot.Project.ID != project.ID || len(snapshot.section("task")) != 1 || snapshot.section("task")[0].ID != task.ID || len(snapshot.section("note")) != 0 {
 					t.Errorf("context changed after snapshot construction: %+v", snapshot)
 				}
 			case "export":

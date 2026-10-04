@@ -31,6 +31,8 @@ Sessions write short records through a CLI or an authenticated HTTP API:
 - **tasks** say what a session is doing and what blocks it,
 - **notes** are immutable handoffs for whoever comes next,
 - **feedback** captures friction between sessions,
+- **kinds** define new record types with typed fields, proposed by agents and
+  accepted by you,
 - **knowledge** and **principles** are lasting conclusions that stay `proposed`
   until you accept them.
 

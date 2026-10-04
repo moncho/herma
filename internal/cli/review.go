@@ -8,9 +8,12 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+
+	"github.com/moncho/herma/internal/store"
 )
 
-// review lists proposed knowledge and principles, the reviewer's queue. It is
+// review lists proposed knowledge, principles and kinds, and pending kind
+// changes, the reviewer's queue. It is
 // read-only, so agents and read-only identities can see what awaits review.
 func review(ctx context.Context, cfg config, args []string, stdout, stderr io.Writer) error {
 	fs := flags("review", stderr)
@@ -35,5 +38,32 @@ func review(ctx context.Context, cfg config, args []string, stdout, stderr io.Wr
 		}
 		queue[key] = data
 	}
+	kinds, err := c.Do(ctx, http.MethodGet, "/v1/records", url.Values{"kind": {"kind"}, "status": {"proposed"}, "limit": {strconv.Itoa(*limit)}, "offset": {strconv.Itoa(*offset)}}, nil, "")
+	if err != nil {
+		return err
+	}
+	queue["kinds"] = kinds
+	// accept_pending applies to accepted and retired kinds alike.
+	pending := []store.Record{}
+	for _, status := range []string{"accepted", "retired"} {
+		data, err := c.Do(ctx, http.MethodGet, "/v1/records", url.Values{"kind": {"kind"}, "status": {status}, "limit": {"200"}}, nil, "")
+		if err != nil {
+			return err
+		}
+		var page store.ListResult
+		if err := json.Unmarshal(data, &page); err != nil {
+			return err
+		}
+		for _, r := range page.Items {
+			if _, ok := r.Fields["pending"]; ok {
+				pending = append(pending, r)
+			}
+		}
+	}
+	data, err := json.Marshal(pending)
+	if err != nil {
+		return err
+	}
+	queue["pending_kind_changes"] = data
 	return output(stdout, queue)
 }
