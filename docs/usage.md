@@ -321,4 +321,48 @@ searching for an embedded word may miss it. Language-aware segmentation is not
 implemented yet. Filters are combined with AND. Lists default to 50 records
 and support up to 200 per page with `--limit` and `--offset`.
 
+### Filtering and sorting
+
+On a list with `--kind`, `--where` filters by a typed field and `--sort` orders
+the result. `--where` can repeat; filters combine with AND and with the other
+filters.
+
+```sh
+./bin/herma list --kind bookmark --where 'rating>=4' --sort -read_at
+./bin/herma list --kind bookmark --where 'platform=youtube' --where 'read_at missing'
+./bin/herma list --kind bookmark --where 'authors has Hipp' --sort title
+```
+
+Quote each expression for the shell. A filter is `<field><op><value>`,
+`<field> has <item>`, `<field> exists` or `<field> missing`. The field name
+ends at the first operator and the rest, trimmed, is the value, so values may
+contain spaces and operator characters.
+
+| Operator | Field types | Meaning |
+| --- | --- | --- |
+| `=`, `!=` | string, text, integer, number, boolean, date, datetime, url, enum | equal, not equal |
+| `<`, `<=`, `>`, `>=` | integer, number, date, datetime, string, url | numbers compare numerically, dates by calendar day, datetimes by instant to the millisecond, strings and urls by bytes |
+| `has` | string-list | the list contains this exact item |
+| `exists`, `missing` | every type | the field is set, or not |
+
+Values follow the field's write rules, so `rating>=four` on an integer field is
+an error, as is an unknown field or an operator the field's type does not
+accept. Because the value is trimmed, a text value with leading or trailing
+spaces can't be matched exactly. `has` matches one whole list item:
+`tags has a,b` looks for the item `a,b`, not for `a` and `b`. `!=` also matches
+records without the field. You can give at most 10 filters.
+
+`--sort` takes up to 3 comma-separated keys, such as `--sort -read_at,title`.
+A leading `-` sorts descending. Records without a value come last, and ties
+break by record ID. Keys are a scalar field of the kind, or one of `priority`,
+`created`, `updated`, `title` and `status`; the core keys win over a field of
+the same name. Without `--sort`, lists keep the default order: priority, then
+most recent update.
+
+Field filters and field sort keys need `--kind`; only the core sort keys work
+without it. Through the API the same query is
+`GET /v1/records?kind=bookmark&where=rating%3E%3D4&sort=-read_at`. URL-encode
+`where`, because a raw `+` in a UTC offset such as `+02:00` decodes to a
+space. Repeat `where` for more filters.
+
 See [the agent workflow](agent-workflow.md) for a session handover pattern.

@@ -342,7 +342,7 @@ func TestSearchFindsFieldValuesAfterUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if userVersion(t, s) != 4 {
+	if userVersion(t, s) != schemaVersion {
 		t.Fatalf("user_version = %d", userVersion(t, s))
 	}
 	if searchTotal(t, s, "old") != 1 {
@@ -352,5 +352,56 @@ func TestSearchFindsFieldValuesAfterUpgrade(t *testing.T) {
 	createRecord(t, s, CreateInput{Kind: "bookmark", Title: "Untitled", Fields: map[string]any{"url": "https://zebra.example/x", "authors": "Hipp"}})
 	if searchTotal(t, s, "zebra") != 1 || searchTotal(t, s, "hipp") != 1 {
 		t.Fatal("field values are not searchable")
+	}
+}
+
+// queryPlan returns SQLite's plan for query, one detail line per step.
+func queryPlan(t *testing.T, s *Store, query string, args ...any) string {
+	t.Helper()
+	rows, err := s.db.Query("EXPLAIN QUERY PLAN "+query, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var lines []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		lines = append(lines, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func TestKindQueriesUseKindIndexes(t *testing.T) {
+	s := testStore(t)
+	if userVersion(t, s) != schemaVersion {
+		t.Fatalf("user_version = %d, want %d", userVersion(t, s), schemaVersion)
+	}
+	for name, c := range map[string]struct {
+		query string
+		args  []any
+		index string
+	}{
+		"kind lookup":     {`SELECT data FROM records WHERE kind = 'kind' AND archived = 0 AND json_extract(data, '$.title') = ?`, []any{"bookmark"}, "records_kind_name"},
+		"kind name check": {`SELECT id FROM records WHERE kind = 'kind' AND archived = 0 AND id <> ? AND json_extract(data, '$.title') = ?`, []any{"", "bookmark"}, "records_kind_name"},
+		"kind list":       {`SELECT r.data FROM records r WHERE 1=1 AND r.kind = ? AND r.archived = 0 ORDER BY r.priority DESC, r.updated_ns DESC, r.id ASC LIMIT ? OFFSET ?`, []any{"bookmark", 50, 0}, "records_kind ("},
+		"uniqueness":      {`SELECT id FROM records WHERE kind = ? AND archived = 0 AND id <> ? AND json_extract(data, ?) = ? ORDER BY id LIMIT 1`, []any{"bookmark", "", "$.fields.url", "https://a.example"}, "records_kind ("},
+		// Session context lists (api contextRecords via List) must stay on
+		// records_project_recent; a wider records_kind would win over it.
+		"context project": {`SELECT r.data FROM records r WHERE 1=1 AND r.kind = ? AND r.project_id = ? AND r.status = ? AND r.archived = 0 ORDER BY r.priority DESC, r.updated_ns DESC, r.id ASC LIMIT ? OFFSET ?`, []any{"task", "prj_1", "open", 50, 0}, "records_project_recent"},
+		"context global":  {`SELECT r.data FROM records r WHERE 1=1 AND r.kind = ? AND r.project_id IS NULL AND r.status = ? AND r.archived = 0 ORDER BY r.priority DESC, r.updated_ns DESC, r.id ASC LIMIT ? OFFSET ?`, []any{"principle", "accepted", 50, 0}, "records_project_recent"},
+		"context recent":  {`SELECT r.data FROM records r WHERE 1=1 AND r.kind = ? AND r.project_id = ? AND r.status = ? AND r.archived = 0 ORDER BY r.updated_ns DESC, r.id ASC LIMIT ? OFFSET ?`, []any{"note", "prj_1", "active", 50, 0}, "records_project_recent"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if plan := queryPlan(t, s, c.query, c.args...); !strings.Contains(plan, c.index) {
+				t.Fatalf("plan does not use %s:\n%s", c.index, plan)
+			}
+		})
 	}
 }

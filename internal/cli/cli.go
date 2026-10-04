@@ -54,7 +54,7 @@ Commands:
   kind change ID --file PATH   Propose a change to an accepted kind (fields.pending)
   kind list                    List kinds with status and pending changes
   create --kind KIND --title TITLE [--body TEXT | --body-file PATH] [fields]
-  list [--project ID] [--kind KIND] [--q TEXT] [filters]
+  list [--project ID] [--kind KIND] [--q TEXT] [--where 'FIELD>=VALUE']... [--sort -FIELD,KEY] [filters]
   get ID
   update ID --version N [fields] [--archived true|false]
   history ID
@@ -293,6 +293,16 @@ type fields struct {
 	fieldsFile                                                                     string
 }
 
+// repeatedFlag collects every value of a repeatable string flag.
+type repeatedFlag []string
+
+func (r *repeatedFlag) String() string { return strings.Join(*r, ", ") }
+
+func (r *repeatedFlag) Set(value string) error {
+	*r = append(*r, value)
+	return nil
+}
+
 // fieldFlags collects repeated --field name=value flags. An empty value
 // removes the field on update.
 type fieldFlags map[string]any
@@ -510,6 +520,9 @@ func list(ctx context.Context, cfg config, args []string, stdout, stderr io.Writ
 	archived := fs.Bool("include-archived", false, "include archived records")
 	limit := fs.Int("limit", 50, "maximum records to return (1–200)")
 	offset := fs.Int("offset", 0, "number of records to skip")
+	var where repeatedFlag
+	fs.Var(&where, "where", "field filter such as 'rating>=4' (repeatable; requires --kind); quote it in the shell")
+	sortSpec := fs.String("sort", "", "sort keys such as -read_at,title (up to 3; '-' for descending)")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
@@ -524,6 +537,12 @@ func list(ctx context.Context, cfg config, args []string, stdout, stderr io.Writ
 		if *value != "" {
 			query.Set(key, *value)
 		}
+	}
+	if len(where) > 0 {
+		query["where"] = where
+	}
+	if *sortSpec != "" {
+		query.Set("sort", *sortSpec)
 	}
 	if *global {
 		query.Set("global", "true")

@@ -107,8 +107,10 @@ type ListOptions struct {
 	Owner       string
 	Tag         string
 	Query       string
-	Archived    bool // Include archived records when true.
-	RecentFirst bool // Rank by update time instead of priority, for handover notes.
+	Archived    bool     // Include archived records when true.
+	RecentFirst bool     // Rank by update time instead of priority, for handover notes.
+	Where       []string // Field filters such as "rating>=4"; require Kind.
+	Sort        string   // Up to three keys such as "-read_at,title".
 	Limit       int
 	Offset      int
 }
