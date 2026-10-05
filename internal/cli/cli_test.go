@@ -20,6 +20,16 @@ func cleanEnv(t *testing.T) {
 	for _, key := range []string{"HERMA_URL", "HERMA_CREDENTIALS", "HERMA_IDENTITY", "HERMA_TOKEN", "HERMA_SOCKET", "HERMA_REVIEWER_CREDENTIALS"} {
 		t.Setenv(key, "")
 	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	plugin := filepath.Join(t.TempDir(), "plugin")
+	if err := os.MkdirAll(filepath.Join(plugin, ".claude-plugin"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plugin, ".claude-plugin", "plugin.json"), []byte(`{"name":"herma"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERMA_CLAUDE_PLUGIN_DIR", plugin)
 }
 
 func TestCredentialsCreationAndIdentityAddition(t *testing.T) {

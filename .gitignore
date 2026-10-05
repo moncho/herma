@@ -5,3 +5,4 @@
 *.sqlite3-shm
 coverage.out
 /knowledge-export.json
+/plugins/claude/.claude-plugin/types/

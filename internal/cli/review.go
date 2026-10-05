@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 
+	"github.com/moncho/herma/internal/client"
 	"github.com/moncho/herma/internal/store"
 )
 
@@ -44,21 +45,9 @@ func review(ctx context.Context, cfg config, args []string, stdout, stderr io.Wr
 	}
 	queue["kinds"] = kinds
 	// accept_pending applies to accepted and retired kinds alike.
-	pending := []store.Record{}
-	for _, status := range []string{"accepted", "retired"} {
-		data, err := c.Do(ctx, http.MethodGet, "/v1/records", url.Values{"kind": {"kind"}, "status": {status}, "limit": {"200"}}, nil, "")
-		if err != nil {
-			return err
-		}
-		var page store.ListResult
-		if err := json.Unmarshal(data, &page); err != nil {
-			return err
-		}
-		for _, r := range page.Items {
-			if _, ok := r.Fields["pending"]; ok {
-				pending = append(pending, r)
-			}
-		}
+	pending, err := pendingKindChanges(ctx, c)
+	if err != nil {
+		return err
 	}
 	data, err := json.Marshal(pending)
 	if err != nil {
@@ -66,4 +55,26 @@ func review(ctx context.Context, cfg config, args []string, stdout, stderr io.Wr
 	}
 	queue["pending_kind_changes"] = data
 	return output(stdout, queue)
+}
+
+// pendingKindChanges lists accepted and retired kinds whose definition change
+// awaits the reviewer; accept_pending applies to both.
+func pendingKindChanges(ctx context.Context, c *client.Client) ([]store.Record, error) {
+	pending := []store.Record{}
+	for _, status := range []string{"accepted", "retired"} {
+		data, err := c.Do(ctx, http.MethodGet, "/v1/records", url.Values{"kind": {"kind"}, "status": {status}, "limit": {"200"}}, nil, "")
+		if err != nil {
+			return nil, err
+		}
+		var page store.ListResult
+		if err := json.Unmarshal(data, &page); err != nil {
+			return nil, err
+		}
+		for _, r := range page.Items {
+			if _, ok := r.Fields["pending"]; ok {
+				pending = append(pending, r)
+			}
+		}
+	}
+	return pending, nil
 }
