@@ -84,6 +84,10 @@ use up to half; working intent and blockers take priority over handoffs.
 `herma context --include-durable`. Use `herma context --format json` when a program
 needs the structured packet.
 
+In Claude Code with the herma plugin loaded, prefer the `mcp__herma__recall` and
+`mcp__herma__get` tools over the CLI for searching and reading. Writes still use
+the CLI.
+
 Treat context as a summary. Check the closing Omitted/Clipped line (or
 `truncated`, `omitted`, `custom_omitted`, `principles_omitted`, `body_truncated` and `truncated_fields` in
 `--format json`) before relying on completeness. Retrieve

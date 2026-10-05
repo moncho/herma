@@ -113,6 +113,17 @@ func installHook(cfg config, args []string, stdout, stderr io.Writer) error {
 		"installed": installations,
 		"message":   "Start a new session. In Codex, review and trust this hook through /hooks first. Token-based hooks require HERMA_TOKEN in the agent environment.",
 	}
+	if *agent == "claude" || *agent == "both" {
+		if os.Getenv("HERMA_TOKEN") != "" {
+			result["plugin"] = "skipped: the Claude Code plugin needs a credentials file, not HERMA_TOKEN"
+		} else {
+			installation, err := installClaudePlugin(executable, cfg)
+			if err != nil {
+				return err
+			}
+			result["plugin"] = installation
+		}
+	}
 	if os.Getenv("HERMA_TOKEN") == "" {
 		credentials, err := filepath.Abs(cfg.credentials)
 		if err != nil {
@@ -129,6 +140,32 @@ func installHook(cfg config, args []string, stdout, stderr io.Writer) error {
 		result["permission_advice"] = "Keep agents from reading the reviewer token: in Claude Code, add \"Read(/" + credentials + ")\" to permissions.deny; in Codex, keep the credentials outside the writable workspace."
 	}
 	return output(stdout, result)
+}
+
+// installClaudePlugin registers the repository's Claude Code plugin in the
+// user's settings, so every session loads it; it stays silent where no
+// checkout is bound.
+func installClaudePlugin(executable string, cfg config) (hooks.Installation, error) {
+	dir := os.Getenv("HERMA_CLAUDE_PLUGIN_DIR")
+	if dir == "" {
+		dir = filepath.Join(filepath.Dir(executable), "..", "plugins", "claude")
+	}
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return hooks.Installation{}, err
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude-plugin", "plugin.json")); err != nil {
+		return hooks.Installation{}, fmt.Errorf("Claude Code plugin not found at %s; run herma from its repository build (bin/herma) or set HERMA_CLAUDE_PLUGIN_DIR", dir)
+	}
+	credentials, err := filepath.Abs(cfg.credentials)
+	if err != nil {
+		return hooks.Installation{}, err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return hooks.Installation{}, err
+	}
+	return hooks.InstallUserPlugin(home, hooks.UserPlugin{Dir: dir, Binary: executable, Credentials: credentials, Identity: cfg.identity, URL: cfg.endpoint})
 }
 
 // A missing binding is a quiet no-op. Other failures are visible warnings but

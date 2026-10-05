@@ -149,5 +149,87 @@ After binding, `herma context` works without repeating the project ID. Context
 refreshes at session boundaries; run it again during a long session before
 coordinating an edit with another agent.
 
+## Claude Code plugin
+
+In the Claude Code CLI, a plugin in `plugins/claude` adds a herma status line and
+two read-only tools. The status line shows:
+
+| State | Text |
+| --- | --- |
+| Healthy, nothing to review | `herma ✓ · backup 3h` |
+| Proposals waiting | `herma ✓ · 2 to review · backup 3h` |
+| Backup stale | `herma ✓ · backup 2d ⚠` |
+| Backups disabled | `herma ✓ · backup off` |
+| No successful backup yet | `herma ✓ · backup none` |
+| `herma status` failed | `herma ✗` and the first line of the error |
+| Identity is a reviewer | `herma ✗ reviewer identity refused` |
+| Options not from user settings | `herma ✗ herma options must come from user settings` |
+| Not a bound checkout | nothing |
+
+Backup ages show as minutes under an hour, hours under two days, then days. The
+line refreshes at session start, every 60 seconds and after each herma tool call, and
+a toast appears when herma becomes unreachable or its backup turns stale.
+
+The tools are `mcp__herma__recall` (a query of up to 500 characters, up to 20
+results, optionally including proposals) and `mcp__herma__get` (one record by ID).
+They are registered only in a bound checkout when the identity is an agent. If
+herma cannot be launched, the tool call returns an error.
+
+`herma hook install --client claude` (or `both`) installs the plugin after the
+hook. It adds the repository's `plugins/claude` folder to
+`env.CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json`, writes
+`pluginConfigs.herma.options` (`herma`, the herma executable; `credentials`, the
+credentials path; `identity`; and `url`, the server URL from `--url` or
+`HERMA_URL`), and allows `mcp__herma__recall` and `mcp__herma__get` under
+`permissions.allow`. Everything else in the file is kept, and repeating the
+command adds nothing twice. The command finds the folder next to the built
+executable (`bin/herma`); set `HERMA_CLAUDE_PLUGIN_DIR` to use another one. If the
+folder is missing, the command fails after installing the hook. With `HERMA_TOKEN`
+set, the plugin step is skipped, because the plugin needs a credentials file.
+A symlinked `~/.claude` or `settings.json` is refused.
+
+The plugin reads its options from user settings only. If project or local
+settings give different ones, or the `herma` or `credentials` path is not absolute,
+it shows `herma ✗ herma options must come from user settings` and runs nothing. It
+runs herma with exactly these options, clearing `HERMA_TOKEN`, `HERMA_IDENTITY`,
+`HERMA_CREDENTIALS`, `HERMA_SOCKET` and `HERMA_URL` from its environment, so it uses the
+agent identity and server you installed with. It shows an error instead of
+registering tools if that identity turns out to be a reviewer. It
+works only in the CLI: in the desktop app it shows `herma ✗` and offers no tools.
+Outside a bound checkout it stays silent.
+
+To remove it, delete the herma path from `env.CLAUDE_CODE_PLUGIN_DIRS`, the
+`pluginConfigs.herma` entry (with its four options `herma`, `credentials`, `identity`
+and `url`) and the two `mcp__herma__` rules from
+`~/.claude/settings.json`.
+
+The status line reads `herma status`, which you can also run yourself inside a
+bound checkout:
+
+```sh
+herma status
+```
+
+```json
+{
+  "backup": {
+    "age_seconds": 10800,
+    "enabled": true,
+    "last_success_at": "2026-10-05T09:00:00Z",
+    "stale": false
+  },
+  "bound": true,
+  "identity": "local-agent",
+  "project_id": "PROJECT_ID",
+  "review": {"knowledge": 1, "principles": 1, "kinds": 0, "pending_kind_changes": 0, "total": 2},
+  "role": "agent",
+  "server": "ok"
+}
+```
+
+Outside a bound checkout it prints `{"bound": false}`. With backups disabled,
+`backup` is `{"enabled": false}`; before the first successful backup,
+`age_seconds` and `last_success_at` are absent.
+
 Next: [using herma](usage.md) for records, roles and the CLI, and
 [operating herma](operations.md) for remote access, security and backups.

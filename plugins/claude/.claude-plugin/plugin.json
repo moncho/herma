@@ -1,0 +1,11 @@
+{
+  "name": "herma",
+  "version": "0.1.0",
+  "description": "herma status line and read-only mcp__herma__recall/mcp__herma__get tools for bound checkouts",
+  "userConfig": {
+    "herma": { "type": "string", "title": "herma binary", "description": "Absolute path of the herma binary", "required": true },
+    "credentials": { "type": "string", "title": "Credentials file", "description": "Absolute path of the agent credentials file", "required": true },
+    "identity": { "type": "string", "title": "Identity", "description": "Agent identity in the credentials file", "default": "local-agent" },
+    "url": { "type": "string", "title": "Server URL", "description": "herma server URL", "required": true }
+  }
+}

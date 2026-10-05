@@ -62,6 +62,7 @@ Commands:
   hook install --client claude|codex|both [--dir PATH]
   hook session-start [--client claude|codex]  Load bounded project context for a SessionStart hook
   review [--limit N] [--offset N]  List proposed knowledge, principles and kinds, and pending kind changes
+  status                       Binding, identity, review queue and backup age as JSON (for status lines)
   context [--project ID] [--max-bytes N] [--include-durable] [--format text|json] [--principles include|omit]
                                Compact session context (text by default)
   recall "words" [--project ID] [--include-proposed] [--limit N] [--max-bytes N]
@@ -173,6 +174,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return kindCommand(ctx, cfg, rest, stdout, stderr)
 	case "review":
 		return review(ctx, cfg, rest, stdout, stderr)
+	case "status":
+		return statusCommand(ctx, cfg, rest, stdout, stderr)
 	case "hook":
 		return hook(ctx, cfg, rest, stdin, stdout, stderr)
 	case "get", "history":

@@ -77,26 +77,11 @@ func Install(dir, client string, command func(client string) (string, error)) ([
 	if strings.TrimSpace(dir) == "" {
 		return nil, errors.New("project directory is required")
 	}
-	abs, err := filepath.Abs(dir)
+	root, abs, err := openDirectory(dir, "project directory")
 	if err != nil {
-		return nil, fmt.Errorf("resolve project directory: %w", err)
-	}
-	info, err := os.Lstat(abs)
-	if err != nil {
-		return nil, fmt.Errorf("inspect project directory: %w", err)
-	}
-	if !info.IsDir() {
-		return nil, errors.New("project directory must be an existing directory, not a symlink")
-	}
-	root, err := os.OpenRoot(abs)
-	if err != nil {
-		return nil, fmt.Errorf("open project directory: %w", err)
+		return nil, err
 	}
 	defer func() { _ = root.Close() }()
-	opened, err := root.Stat(".")
-	if err != nil || !os.SameFile(info, opened) {
-		return nil, errors.New("project directory changed while opening; retry installation")
-	}
 	for i := range plans {
 		p := &plans[i]
 		cmd, err := command(p.client)
@@ -164,6 +149,73 @@ func Install(dir, client string, command func(client string) (string, error)) ([
 		installed = append(installed, Installation{Client: p.client, Path: filepath.Join(abs, p.path), ID: HookID, Changed: changed})
 	}
 	return installed, nil
+}
+
+// parseSettings decodes a settings file as an ordered object; nil data is an
+// empty object.
+func parseSettings(data []byte) (*object, error) {
+	if data == nil {
+		return newObject(), nil
+	}
+	if !utf8.Valid(data) {
+		return nil, errors.New("configuration must be valid UTF-8")
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	value, err := parseJSON(dec, 0)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, errors.New("configuration must contain exactly one JSON object")
+	}
+	settings, ok := value.(*object)
+	if !ok {
+		return nil, errors.New("configuration must be a JSON object")
+	}
+	return settings, nil
+}
+
+// encodeSettings writes settings back with two-space indentation and no HTML
+// escaping, refusing results above the size limit.
+func encodeSettings(settings *object) ([]byte, error) {
+	var result bytes.Buffer
+	encoder := json.NewEncoder(&result)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(settings); err != nil {
+		return nil, err
+	}
+	if result.Len() > maxConfigBytes {
+		return nil, errors.New("updated configuration would exceed 2 MiB")
+	}
+	return result.Bytes(), nil
+}
+
+// openDirectory opens an existing, non-symlink directory as a root, checking
+// it did not change between inspection and opening.
+func openDirectory(dir, what string) (*os.Root, string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve %s: %w", what, err)
+	}
+	info, err := os.Lstat(abs)
+	if err != nil {
+		return nil, "", fmt.Errorf("inspect %s: %w", what, err)
+	}
+	if !info.IsDir() {
+		return nil, "", fmt.Errorf("%s must be an existing directory, not a symlink", what)
+	}
+	root, err := os.OpenRoot(abs)
+	if err != nil {
+		return nil, "", fmt.Errorf("open %s: %w", what, err)
+	}
+	opened, err := root.Stat(".")
+	if err != nil || !os.SameFile(info, opened) {
+		_ = root.Close()
+		return nil, "", fmt.Errorf("%s changed while opening; retry installation", what)
+	}
+	return root, abs, nil
 }
 
 func checkDirectory(root *os.Root, path string) error {
@@ -253,25 +305,9 @@ func stage(root *os.Root, parent string, data []byte) (string, error) {
 }
 
 func merge(data []byte, client, command string) ([]byte, error) {
-	settings := newObject()
-	if data != nil {
-		if !utf8.Valid(data) {
-			return nil, errors.New("hook configuration must be valid UTF-8")
-		}
-		dec := json.NewDecoder(bytes.NewReader(data))
-		dec.UseNumber()
-		value, err := parseJSON(dec, 0)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-			return nil, errors.New("configuration must contain exactly one JSON object")
-		}
-		var ok bool
-		settings, ok = value.(*object)
-		if !ok {
-			return nil, errors.New("configuration must be a JSON object")
-		}
+	settings, err := parseSettings(data)
+	if err != nil {
+		return nil, err
 	}
 	hookSettings := newObject()
 	if raw, ok := settings.get("hooks"); ok {
@@ -353,17 +389,7 @@ func merge(data []byte, client, command string) ([]byte, error) {
 	}
 	hookSettings.set("SessionStart", groups)
 	settings.set("hooks", hookSettings)
-	var result bytes.Buffer
-	encoder := json.NewEncoder(&result)
-	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(settings); err != nil {
-		return nil, err
-	}
-	if result.Len() > maxConfigBytes {
-		return nil, errors.New("updated hook configuration would exceed 2 MiB")
-	}
-	return result.Bytes(), nil
+	return encodeSettings(settings)
 }
 
 // object is a parsed JSON object that keeps its key order, so rewriting a
