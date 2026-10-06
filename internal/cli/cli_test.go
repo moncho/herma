@@ -22,6 +22,7 @@ func cleanEnv(t *testing.T) {
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Chdir(t.TempDir())
 	plugin := filepath.Join(t.TempDir(), "plugin")
 	if err := os.MkdirAll(filepath.Join(plugin, ".claude-plugin"), 0700); err != nil {
 		t.Fatal(err)
