@@ -100,13 +100,6 @@ and Codex hook trust.
 - [Agent workflow](docs/agent-workflow.md): a session handover pattern.
 - [Design notes](docs/design.md): package structure and current limits.
 
-## Development
-
-```sh
-go test -race ./...
-go vet ./...
-```
-
 ## License
 
 [MIT](LICENSE)
