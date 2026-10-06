@@ -75,3 +75,7 @@ In another terminal, an agent proposes something and you review it:
 go test -race ./...
 go vet ./...
 ```
+
+## License
+
+[MIT](LICENSE)
