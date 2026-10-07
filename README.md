@@ -61,28 +61,27 @@ Not all reviewed knowledge is loaded here. When a task touches past decisions or
 Requires Go 1.27 or later.
 
 ```sh
-go build -trimpath -buildvcs=false -o bin/herma ./cmd/herma
-./bin/herma init      # creates `owner` (you, the reviewer) and `local-agent`
-./bin/herma serve
+make install    # copies the binary to /usr/local/bin
+herma init      # creates `owner` (you, the reviewer) and `local-agent` in ~/.config/herma
+herma serve
 ```
 
 In another terminal, an agent proposes something and you review it:
 
 ```sh
-./bin/herma create --kind knowledge --title 'SQLite runs in WAL mode' \
+herma create --kind knowledge --title 'SQLite runs in WAL mode' \
   --sources https://sqlite.org/wal.html
-./bin/herma review
-./bin/herma --identity owner update RECORD_ID --version 1 --status accepted
+herma review
+herma --identity owner update RECORD_ID --version 1 --status accepted
 ```
 
 To load context into your agent sessions, create a project for your repository
-and bind it from the repository's root, using absolute paths to herma:
+and bind it from the repository's root:
 
 ```sh
-export HERMA_CREDENTIALS=/path/to/herma/.herma/credentials.json
-/path/to/herma/bin/herma create --kind project --title 'My repository' --status active
-/path/to/herma/bin/herma project bind --project PROJECT_ID
-/path/to/herma/bin/herma hook install --client both   # or claude, or codex
+herma create --kind project --title 'My repository' --status active
+herma project bind --project PROJECT_ID
+herma hook install --client both   # or claude, or codex
 ```
 
 New Claude Code and Codex sessions in that repository then start with herma

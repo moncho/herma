@@ -11,14 +11,19 @@ import (
 	"path/filepath"
 )
 
-// pluginDir is where WritePlugin puts the Claude Code plugin, under home.
-var pluginDir = filepath.Join(".config", "herma", "plugins", "claude")
+// pluginDir is where WritePlugin puts the Claude Code plugin, under herma's
+// data folder.
+var pluginDir = filepath.Join("plugins", "claude")
 
-// WritePlugin writes the plugin files to home/.config/herma/plugins/claude and
-// returns that folder. An identical copy is left alone; otherwise the folder is
-// replaced whole, so no file of an older version remains.
-func WritePlugin(home string, files fs.FS) (string, error) {
-	root, abs, err := openDirectory(home, "home directory")
+// WritePlugin writes the plugin files to plugins/claude in herma's data folder,
+// creating that folder if needed, and returns the plugin folder. An identical
+// copy is left alone; otherwise the folder is replaced whole, so no file of an
+// older version remains.
+func WritePlugin(dataDir string, files fs.FS) (string, error) {
+	if err := os.MkdirAll(dataDir, 0700); err != nil {
+		return "", fmt.Errorf("create %s: %w", dataDir, err)
+	}
+	root, abs, err := openDirectory(dataDir, "herma data folder")
 	if err != nil {
 		return "", err
 	}

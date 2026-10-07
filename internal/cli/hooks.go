@@ -143,8 +143,8 @@ func installHook(cfg config, args []string, stdout, stderr io.Writer) error {
 	return output(stdout, result)
 }
 
-// installClaudePlugin writes herma's built-in Claude Code plugin under the
-// user's home and registers it in the user's settings, so every session loads
+// installClaudePlugin writes herma's built-in Claude Code plugin into the data
+// folder and registers it in the user's settings, so every session loads
 // it; it stays silent where no checkout is bound. HERMA_CLAUDE_PLUGIN_DIR
 // registers that folder instead, for working on the plugin in a checkout.
 func installClaudePlugin(executable string, cfg config) (hooks.Installation, error) {
@@ -154,7 +154,7 @@ func installClaudePlugin(executable string, cfg config) (hooks.Installation, err
 	}
 	dir := os.Getenv("HERMA_CLAUDE_PLUGIN_DIR")
 	if dir == "" {
-		if dir, err = hooks.WritePlugin(home, plugins.Claude()); err != nil {
+		if dir, err = hooks.WritePlugin(cfg.dir, plugins.Claude()); err != nil {
 			return hooks.Installation{}, err
 		}
 	}

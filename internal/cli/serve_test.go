@@ -223,3 +223,40 @@ func TestServeReportsAddressInUse(t *testing.T) {
 		t.Fatalf("underlying error not wrapped: %v", err)
 	}
 }
+
+func TestDefaultsLiveInTheDataFolder(t *testing.T) {
+	cleanEnv(t)
+	if _, err := runCLI(t, "init"); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(os.Getenv("HOME"), ".config", "herma")
+	info, err := os.Stat(home)
+	if err != nil || info.Mode().Perm() != 0700 {
+		t.Fatalf("data folder %s: %v %v", home, info, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "credentials.json")); err != nil {
+		t.Fatalf("init did not write to the data folder: %v", err)
+	}
+
+	dir := shortDir(t)
+	t.Setenv("HERMA_DIR", dir)
+	t.Chdir(t.TempDir())
+	if _, err := runCLI(t, "init"); err != nil {
+		t.Fatal(err)
+	}
+	address := freeAddress(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, []string{"serve", "--listen", address}, io.Discard, io.Discard) }()
+	waitForServe(t, "http://"+address, filepath.Join(dir, "herma.sock"))
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "knowledge.sqlite3")); err != nil {
+		t.Fatalf("serve did not use the data folder's database: %v", err)
+	}
+	if entries, _ := os.ReadDir("."); len(entries) != 0 {
+		t.Fatalf("defaults wrote into the working folder: %v", entries)
+	}
+}

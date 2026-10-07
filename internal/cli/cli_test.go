@@ -17,7 +17,7 @@ import (
 
 func cleanEnv(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{"HERMA_URL", "HERMA_CREDENTIALS", "HERMA_IDENTITY", "HERMA_TOKEN", "HERMA_SOCKET", "HERMA_REVIEWER_CREDENTIALS"} {
+	for _, key := range []string{"HERMA_URL", "HERMA_CREDENTIALS", "HERMA_IDENTITY", "HERMA_TOKEN", "HERMA_SOCKET", "HERMA_REVIEWER_CREDENTIALS", "HERMA_DIR"} {
 		t.Setenv(key, "")
 	}
 	home := t.TempDir()

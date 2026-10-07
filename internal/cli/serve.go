@@ -102,7 +102,7 @@ func serverCredentialPaths(credentials, reviewerCredentials string) ([]string, e
 
 func serve(ctx context.Context, cfg config, args []string, stderr io.Writer) error {
 	fs := flags("serve", stderr)
-	dbPath := fs.String("db", ".herma/knowledge.sqlite3", "SQLite database path")
+	dbPath := fs.String("db", filepath.Join(cfg.dir, "knowledge.sqlite3"), "SQLite database path")
 	listen := fs.String("listen", "127.0.0.1:8765", "HTTP listen address (loopback only)")
 	backupDir := fs.String("backup-dir", "", "write snapshots into this directory (off when empty)")
 	backupEvery := fs.Duration("backup-every", 6*time.Hour, "interval between snapshots (minimum 5m)")

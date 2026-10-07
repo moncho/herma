@@ -8,23 +8,23 @@ import (
 )
 
 func TestWritePluginWritesReplacesAndKeepsIdenticalFiles(t *testing.T) {
-	home := t.TempDir()
+	data := filepath.Join(t.TempDir(), "herma")
 	v1 := fstest.MapFS{
 		".claude-plugin/plugin.json": {Data: []byte(`{"name":"herma"}`)},
 		"hooks/register.ts":          {Data: []byte("v1")},
 	}
-	dir, err := WritePlugin(home, v1)
+	dir, err := WritePlugin(data, v1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(home, ".config", "herma", "plugins", "claude"); dir != want {
+	if want := filepath.Join(data, "plugins", "claude"); dir != want {
 		t.Fatalf("dir %q, want %q", dir, want)
 	}
 	before, err := os.Stat(filepath.Join(dir, "hooks", "register.ts"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := WritePlugin(home, v1); err != nil {
+	if _, err := WritePlugin(data, v1); err != nil {
 		t.Fatal(err)
 	}
 	after, err := os.Stat(filepath.Join(dir, "hooks", "register.ts"))
@@ -36,7 +36,7 @@ func TestWritePluginWritesReplacesAndKeepsIdenticalFiles(t *testing.T) {
 		".claude-plugin/plugin.json": {Data: []byte(`{"name":"herma"}`)},
 		"hooks/status.ts":            {Data: []byte("v2")},
 	}
-	if _, err := WritePlugin(home, v2); err != nil {
+	if _, err := WritePlugin(data, v2); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "hooks", "register.ts")); !os.IsNotExist(err) {
@@ -51,15 +51,15 @@ func TestWritePluginWritesReplacesAndKeepsIdenticalFiles(t *testing.T) {
 }
 
 func TestWritePluginRefusesASymlinkedFolder(t *testing.T) {
-	home := t.TempDir()
-	plugins := filepath.Join(home, ".config", "herma", "plugins")
+	data := t.TempDir()
+	plugins := filepath.Join(data, "plugins")
 	if err := os.MkdirAll(plugins, 0700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(t.TempDir(), filepath.Join(plugins, "claude")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := WritePlugin(home, fstest.MapFS{"hooks/register.ts": {Data: []byte("v1")}}); err == nil {
+	if _, err := WritePlugin(data, fstest.MapFS{"hooks/register.ts": {Data: []byte("v1")}}); err == nil {
 		t.Fatal("wrote through a symlinked plugin folder")
 	}
 }

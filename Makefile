@@ -21,16 +21,17 @@ test:
 run:
 	go run -buildvcs=false ./cmd/herma serve
 
-# macOS background service for the current login session. Absolute paths keep
-# the service independent of whichever directory launchd starts it from.
+# macOS background service for the current login session, running the
+# installed binary on herma's data folder (credentials, database, socket, log).
 # Optional: make service-start BACKUP_DIR=/path/to/synced/folder
-#           REVIEWER_CREDENTIALS=/path/to/reviewer.json
+#           REVIEWER_CREDENTIALS=/path/to/reviewer.json HERMA_DIR=/path/to/data
+HERMA_DIR ?= $(HOME)/.config/herma
 BACKUP_FLAGS = $(if $(BACKUP_DIR),--backup-dir "$(BACKUP_DIR)")
 REVIEWER_FLAGS = $(if $(REVIEWER_CREDENTIALS),--reviewer-credentials "$(REVIEWER_CREDENTIALS)")
 
-service-start: build
-	@test -f "$(CURDIR)/.herma/credentials.json" || { echo "Run ./bin/herma init first." >&2; exit 1; }
-	launchctl submit -l local.herma -o "$(CURDIR)/.herma/server.log" -e "$(CURDIR)/.herma/server.log" -- "$(CURDIR)/bin/herma" --credentials "$(CURDIR)/.herma/credentials.json" serve --db "$(CURDIR)/.herma/knowledge.sqlite3" --listen 127.0.0.1:8765 $(BACKUP_FLAGS) $(REVIEWER_FLAGS)
+service-start: install
+	@test -f "$(HERMA_DIR)/credentials.json" || { echo "Run herma init first (credentials go to $(HERMA_DIR))." >&2; exit 1; }
+	launchctl submit -l local.herma -o "$(HERMA_DIR)/server.log" -e "$(HERMA_DIR)/server.log" -- "$(BINDIR)/herma" --credentials "$(HERMA_DIR)/credentials.json" serve --db "$(HERMA_DIR)/knowledge.sqlite3" --listen 127.0.0.1:8765 $(BACKUP_FLAGS) $(REVIEWER_FLAGS)
 
 service-stop:
 	launchctl remove local.herma

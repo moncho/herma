@@ -29,7 +29,8 @@ const usage = `Usage: herma [--url URL] [--credentials PATH] [--identity NAME] [
 
 Global flags must come before the command. Environment defaults:
   HERMA_URL          http://127.0.0.1:8765
-  HERMA_CREDENTIALS  .herma/credentials.json
+  HERMA_DIR          ~/.config/herma; holds credentials, database, socket and plugin
+  HERMA_CREDENTIALS  credentials.json in HERMA_DIR
   HERMA_IDENTITY     local-agent
   HERMA_SOCKET       herma.sock next to the credentials file
   HERMA_TOKEN        optional bearer token; replaces credential-file authentication
@@ -86,7 +87,21 @@ agents, accepted by the reviewer); real tasks stay in your issue tracker. Errors
 
 type config struct {
 	endpoint, credentials, identity, socket string
+	dir                                     string // data folder; see dataDir
 	identitySelected                        bool
+}
+
+// dataDir returns the folder holding herma's credentials, database, socket and
+// Claude Code plugin: HERMA_DIR, or ~/.config/herma.
+func dataDir() (string, error) {
+	if dir := os.Getenv("HERMA_DIR"); dir != "" {
+		return filepath.Abs(dir)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("find the home folder for herma's data (or set HERMA_DIR): %w", err)
+	}
+	return filepath.Join(home, ".config", "herma"), nil
 }
 
 func envDefault(key, fallback string) string {
@@ -120,9 +135,13 @@ func RunWithInput(ctx context.Context, args []string, stdin io.Reader, stdout, s
 
 func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	var cfg config
+	var err error
+	if cfg.dir, err = dataDir(); err != nil {
+		return err
+	}
 	f := flags("herma", stderr)
 	f.StringVar(&cfg.endpoint, "url", envDefault("HERMA_URL", "http://127.0.0.1:8765"), "knowledge base server URL")
-	f.StringVar(&cfg.credentials, "credentials", envDefault("HERMA_CREDENTIALS", ".herma/credentials.json"), "credentials JSON path")
+	f.StringVar(&cfg.credentials, "credentials", envDefault("HERMA_CREDENTIALS", filepath.Join(cfg.dir, "credentials.json")), "credentials JSON path")
 	f.StringVar(&cfg.identity, "identity", envDefault("HERMA_IDENTITY", defaultIdentity), "authenticated identity")
 	f.StringVar(&cfg.socket, "socket", envDefault("HERMA_SOCKET", ""), "Unix socket path; defaults to herma.sock next to the credentials file")
 	f.Usage = func() { fmt.Fprint(stderr, usage) }
