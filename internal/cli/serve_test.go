@@ -260,3 +260,38 @@ func TestDefaultsLiveInTheDataFolder(t *testing.T) {
 		t.Fatalf("defaults wrote into the working folder: %v", entries)
 	}
 }
+
+func TestNoteIfSlowWarnsOnlyWhenTheWaitOutlastsTheDelay(t *testing.T) {
+	var slow syncBuffer
+	stop := noteIfSlow(&slow, 10*time.Millisecond, "still waiting")
+	time.Sleep(100 * time.Millisecond)
+	stop()
+	if got := slow.String(); got != "still waiting\n" {
+		t.Fatalf("slow wait logged %q", got)
+	}
+
+	var quick syncBuffer
+	stop = noteIfSlow(&quick, time.Hour, "still waiting")
+	stop()
+	if got := quick.String(); got != "" {
+		t.Fatalf("quick wait logged %q", got)
+	}
+}
+
+// syncBuffer is a bytes.Buffer safe for one writer goroutine and a reader.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}

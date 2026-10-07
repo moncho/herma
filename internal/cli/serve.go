@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -157,7 +158,11 @@ func serve(ctx context.Context, cfg config, args []string, stderr io.Writer) err
 	handler := api.NewHandler(db, apiIdentities(identities))
 	var backups *backup.Runner
 	if *backupDir != "" {
+		// Reading the folder can block without an error, as when macOS keeps a
+		// background service out of iCloud Drive; say so rather than hang silently.
+		stop := noteIfSlow(stderr, backupFolderPatience, fmt.Sprintf("herma: still waiting to read backup folder %s; on macOS, a background service needs Full Disk Access to read iCloud Drive", *backupDir))
 		backups, err = backup.New(db, backup.Config{Dir: *backupDir, Every: *backupEvery, Keep: *backupKeep}, stderr, time.Now)
+		stop()
 		if err != nil {
 			return err
 		}
@@ -229,4 +234,23 @@ func serve(ctx context.Context, cfg config, args []string, stderr io.Writer) err
 	case <-ctx.Done():
 		return shutdown()
 	}
+}
+
+// backupFolderPatience is how long serve waits on the backup folder before
+// saying it is still waiting.
+const backupFolderPatience = 10 * time.Second
+
+// noteIfSlow writes message to w if the returned stop is not called within
+// delay. Calling stop more than once is safe.
+func noteIfSlow(w io.Writer, delay time.Duration, message string) (stop func()) {
+	done := make(chan struct{})
+	var once sync.Once
+	go func() {
+		select {
+		case <-done:
+		case <-time.After(delay):
+			fmt.Fprintln(w, message)
+		}
+	}()
+	return func() { once.Do(func() { close(done) }) }
 }
