@@ -106,10 +106,11 @@ awaits review. Never create a second kind for the same purpose.
 
 Create a coordination record when another session needs to know your scope,
 ownership or blocker. A `task` in herma describes that session activity; it is not a
-second backlog. Use the real issue URL in `sources`:
+second backlog. Use the real issue URL in `sources`. Run it from the bound
+checkout: tasks and notes take the binding's project unless you pass `--project`.
 
 ```sh
-herma --identity session-a create --kind task --project PROJECT_ID \
+herma --identity session-a create --kind task \
   --title 'Session A is editing request validation' \
   --body 'Working in internal/api. Coordinate overlapping edits before changing these files.' \
   --status in_progress --owner session-a --sources ISSUE_URL \
@@ -148,7 +149,7 @@ context. Include these items when relevant:
 - **References:** the issue, canonical memory/wiki page and related herma IDs.
 
 ```sh
-herma --identity session-a create --kind note --project PROJECT_ID \
+herma --identity session-a create --kind note \
   --title 'Request-validation handoff' --body-file handoff.md \
   --tags handoff --links COORDINATION_ID \
   --sources ISSUE_URL,COMMIT_URL,MEMORY_OR_WIKI_REFERENCE \

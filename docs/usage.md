@@ -203,6 +203,11 @@ in text context. When they do not fit the budget, they are left out whole and
 ./bin/herma list --project PROJECT_ID --kind note --tag handoff
 ```
 
+Inside a checkout with a `.herma-project.json`, `create` puts tasks, feedback,
+notes and custom-kind records in the bound project when you omit `--project`;
+pass `--project ''` to leave one without a project. Knowledge and principles stay
+global unless you pass `--project`.
+
 Global flags (`--url`, `--credentials`, `--identity`, `--socket`) go **before**
 the command. Record/filter flags go after it; for updates, flags go after the
 record ID. Use `--body-file notes.md` for multiline text, and comma-separated

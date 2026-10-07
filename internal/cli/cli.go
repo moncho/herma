@@ -332,7 +332,7 @@ func (v *fields) register(fs *flag.FlagSet) {
 	fs.StringVar(&v.title, "title", "", "record title")
 	fs.StringVar(&v.body, "body", "", "record text, including multiline text")
 	fs.StringVar(&v.bodyFile, "body-file", "", "read UTF-8 body from this file")
-	fs.StringVar(&v.project, "project", "", "project record ID; empty clears it on update")
+	fs.StringVar(&v.project, "project", "", "project record ID; create defaults to the binding for tasks, feedback, notes and custom kinds; empty clears it on update")
 	fs.StringVar(&v.status, "status", "", "record status; see herma schema")
 	fs.IntVar(&v.priority, "priority", 0, "record priority; see herma schema")
 	fs.StringVar(&v.owner, "owner", "", "task owner; empty clears it on update")
@@ -425,6 +425,11 @@ func create(ctx context.Context, cfg config, args []string, stdout, stderr io.Wr
 	for name, value := range fieldValues {
 		if value == nil {
 			return fmt.Errorf("--field %s= has no value; omit the field on create", name)
+		}
+	}
+	if !supplied(fs)["project"] && store.ProjectByDefault(*kind) {
+		if v.project, err = boundProject(); err != nil {
+			return err
 		}
 	}
 	input := store.CreateInput{Kind: *kind, Title: v.title, Body: v.body, ProjectID: v.project, Status: v.status, Priority: v.priority, Owner: v.owner, Tags: csv(v.tags), Links: csv(v.links), Sources: csv(v.sources), Fields: fieldValues}

@@ -49,15 +49,8 @@ func recallCommand(ctx context.Context, cfg config, args []string, stdout, stder
 		return err
 	}
 	if *projectID == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-		binding, _, err := project.Discover(cwd)
-		switch {
-		case err == nil:
-			*projectID = binding.ProjectID
-		case !errors.Is(err, project.ErrNoBinding):
+		var err error
+		if *projectID, err = boundProject(); err != nil {
 			return err
 		}
 	}
@@ -83,4 +76,18 @@ func recallCommand(ctx context.Context, cfg config, args []string, stdout, stder
 	}
 	_, err = stdout.Write(compact.Bytes())
 	return err
+}
+
+// boundProject returns the project ID of the nearest binding above the working
+// directory, or "" when there is none.
+func boundProject() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	binding, _, err := project.Discover(cwd)
+	if errors.Is(err, project.ErrNoBinding) {
+		return "", nil
+	}
+	return binding.ProjectID, err
 }

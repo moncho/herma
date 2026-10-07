@@ -87,3 +87,34 @@ func TestRecallCommandAsksToQuoteMultiWordQueries(t *testing.T) {
 		t.Errorf("flag after query: %v", err)
 	}
 }
+
+func TestCreateUsesBindingForKindsThatNeedAProject(t *testing.T) {
+	startServe(t)
+	here := createAs(t, "local-agent", "--kind", "project", "--title", "Here")
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := project.Bind(root, project.Binding{ProjectID: here.ID}); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	for _, kind := range []string{"task", "feedback", "note"} {
+		if r := createAs(t, "local-agent", "--kind", kind, "--title", "Bound "+kind); r.ProjectID != here.ID {
+			t.Errorf("%s project = %q, want the binding's %q", kind, r.ProjectID, here.ID)
+		}
+	}
+	for _, kind := range []string{"knowledge", "principle", "project"} {
+		if r := createAs(t, "local-agent", "--kind", kind, "--title", "Global "+kind); r.ProjectID != "" {
+			t.Errorf("%s project = %q, want none", kind, r.ProjectID)
+		}
+	}
+	if r := createAs(t, "local-agent", "--kind", "note", "--title", "Opted out", "--project", ""); r.ProjectID != "" {
+		t.Errorf("explicit empty --project kept %q", r.ProjectID)
+	}
+
+	t.Chdir(t.TempDir())
+	if r := createAs(t, "local-agent", "--kind", "note", "--title", "Unbound"); r.ProjectID != "" {
+		t.Errorf("unbound note project = %q, want none", r.ProjectID)
+	}
+}

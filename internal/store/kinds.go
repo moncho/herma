@@ -138,6 +138,15 @@ func init() {
 	}
 }
 
+// ProjectByDefault reports whether a new record of the kind belongs to the
+// creator's project when none is given: true for every kind whose records load
+// only into their project's context, false for the global built-ins (knowledge,
+// principle) and for project and kind records.
+func ProjectByDefault(kind string) bool {
+	k, ok := builtinKinds[kind]
+	return !ok || (k.Definition.Policy.Context != nil && !k.ContextGlobal)
+}
+
 // parseDefinition decodes and validates a definition document. field names
 // the document in errors, such as fields.definition or fields.pending.
 func parseDefinition(field string, data []byte) (Definition, error) {
