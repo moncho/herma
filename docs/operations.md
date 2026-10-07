@@ -40,19 +40,15 @@ herma identity add laptop --client-file ~/laptop-credentials.json
 ```
 
 The client file is private (0600), is never written over an existing file, and
-cannot hold a reviewer. Move it privately to the other machine, for example to
+cannot hold a reviewer. Move it privately to the other machine's data folder as
 `~/.config/herma/credentials.json` with the same permissions, and delete the
 copy on the server machine. On the other machine, install herma (`make install`
 in a checkout, or `go install github.com/moncho/herma/cmd/herma@latest`), then
 bind each repository and install the hooks from its root, naming the tunnel URL:
 
 ```sh
-herma --url https://herma.example.ts.net \
-  --credentials ~/.config/herma/credentials.json --identity laptop \
-  project bind --project PROJECT_ID
-herma --url https://herma.example.ts.net \
-  --credentials ~/.config/herma/credentials.json --identity laptop \
-  hook install --client claude
+herma --url https://herma.example.ts.net --identity laptop project bind --project PROJECT_ID
+herma --url https://herma.example.ts.net --identity laptop hook install --client claude
 ```
 
 The hooks and the plugin record the installed binary's absolute path. To end a
@@ -61,17 +57,17 @@ that cannot keep a file, such as cloud sessions, use `HERMA_URL` and
 `HERMA_TOKEN` instead; they get session context but not the plugin.
 
 The server can run on any machine with a local disk. To move it, stop the
-service, [restore](#backups-and-restore) the newest snapshot on the new machine,
-copy the server's credentials files there privately (snapshots hold no
+service, [restore](#backups-and-restore) the newest snapshot into the new
+machine's data folder, copy the server's credentials files there privately (snapshots hold no
 credentials), start the service and point the tunnel at it. Clients keep their
 files.
 
 ## Keeping the reviewer token out of the agents' file
 
-By default `.herma/credentials.json` holds every identity, so anything that can read
-it, including the session hook, also holds the reviewer token. To keep that token
-elsewhere, move reviewer identities into a second private (0600) file outside the
-repository and pass it to the server:
+By default `credentials.json` in the data folder holds every identity, so
+anything that can read it, including the session hook, also holds the reviewer
+token. To keep that token elsewhere, move reviewer identities into a second
+private (0600) file and pass it to the server:
 
 ```sh
 herma serve --reviewer-credentials ~/.config/herma/reviewer.json ...
@@ -83,7 +79,7 @@ error, and the merged set must contain a reviewer. Reviewer commands then name
 that file and the server's socket:
 
 ```sh
-herma --credentials ~/.config/herma/reviewer.json --socket /path/to/.herma/herma.sock --identity owner whoami
+herma --credentials ~/.config/herma/reviewer.json --socket ~/.config/herma/herma.sock --identity owner whoami
 ```
 
 To move an existing reviewer, copy its entry into the new file, restart the
@@ -108,8 +104,8 @@ filesystem or open competing service processes against it.
 ## Export, backups and restore
 
 ```sh
-./bin/herma export > .herma/knowledge-export.json.tmp &&
-  mv .herma/knowledge-export.json.tmp .herma/knowledge-export.json
+herma export > knowledge-export.json.tmp &&
+  mv knowledge-export.json.tmp knowledge-export.json
 ```
 
 Export includes all records and their revision history, including archived data.
@@ -161,11 +157,11 @@ with `make service-stop` first.
 To restore after losing the machine:
 
 ```sh
-./bin/herma init
-./bin/herma restore /path/to/synced/herma-backups
-./bin/herma serve --backup-dir /path/to/synced/herma-backups
+herma init
+herma restore /path/to/synced/herma-backups
+herma serve --backup-dir /path/to/synced/herma-backups
 # or, on macOS: make service-start BACKUP_DIR=/path/to/synced/herma-backups
-./bin/herma identity add session-a
+herma identity add session-a
 ```
 
 `herma restore SNAPSHOT|DIR [--db PATH] [--replace]` picks the newest snapshot that

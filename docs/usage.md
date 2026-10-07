@@ -21,7 +21,7 @@ complete revision in the same transaction.
 
 ## Roles and review
 
-Each identity in `.herma/credentials.json` has a role:
+Each identity in `credentials.json` has a role:
 
 | Role | Can do |
 | --- | --- |
@@ -34,8 +34,8 @@ by `list` and search, but never loaded into session context. To approve one, the
 reviewer reads it and updates it at that version:
 
 ```sh
-./bin/herma review
-./bin/herma --identity owner update RECORD_ID --version N --status accepted
+herma review
+herma --identity owner update RECORD_ID --version N --status accepted
 ```
 
 Kind definitions follow `proposed`, `accepted`, `retired`, and only the reviewer
@@ -111,20 +111,20 @@ Policy keys:
 ```sh
 # Agent: propose the kind. NAME matches ^[a-z][a-z0-9_]{0,39}$; built-in names
 # and the reserved name custom are refused.
-./bin/herma kind propose bookmark --file def.json --body 'Links worth reading later.'
+herma kind propose bookmark --file def.json --body 'Links worth reading later.'
 
 # Reviewer: see it under "kinds" in the queue, then accept it.
-./bin/herma --identity owner review
-./bin/herma --identity owner update KIND_ID --version N --status accepted
+herma --identity owner review
+herma --identity owner update KIND_ID --version N --status accepted
 
 # Agent: propose a change to the accepted kind (a full replacement document).
-./bin/herma kind change KIND_ID --file def2.json
+herma kind change KIND_ID --file def2.json
 
 # Reviewer: "pending_kind_changes" in the queue lists these. Apply one.
-./bin/herma --identity owner update KIND_ID --version N --accept-pending
+herma --identity owner update KIND_ID --version N --accept-pending
 
 # Reviewer: stop new records; existing ones stay readable and editable.
-./bin/herma --identity owner update KIND_ID --version N --status retired
+herma --identity owner update KIND_ID --version N --status retired
 ```
 
 `herma kind list` shows the kinds. A kind is `proposed`, `accepted` or `retired`;
@@ -144,10 +144,10 @@ ones included.
 ### Writing records
 
 ```sh
-./bin/herma create --kind bookmark --title 'Raft paper' \
+herma create --kind bookmark --title 'Raft paper' \
   --field url=https://raft.github.io/raft.pdf --field rating=5 \
   --field authors='Ongaro,Ousterhout'
-./bin/herma update RECORD_ID --version 2 --field rating=4 --field read_at=
+herma update RECORD_ID --version 2 --field rating=4 --field read_at=
 ```
 
 `--field name=value` is repeatable. On update, `name=` removes the field; on
@@ -180,27 +180,27 @@ in text context. When they do not fit the budget, they are left out whole and
 
 ```sh
 # Save the returned project ID for subsequent commands.
-./bin/herma create --kind project --title 'Repository sessions' --status active
+herma create --kind project --title 'Repository sessions' --status active
 
 # Replace PROJECT_ID with that ID.
-./bin/herma --identity session-a create --kind task \
+herma --identity session-a create --kind task \
   --project PROJECT_ID --title 'Session A is editing the API' --priority 4 \
   --body 'Working in internal/api; please coordinate overlapping edits here.' \
   --status in_progress --owner session-a --sources ISSUE_URL \
   --request-id api-session-a-start-1
 
 # A fresh session receives a bounded context packet.
-./bin/herma --identity session-b context --project PROJECT_ID
+herma --identity session-b context --project PROJECT_ID
 
 # Leave a handoff; use returned coordination IDs in --links.
-./bin/herma --identity session-a create --kind note \
+herma --identity session-a create --kind note \
   --project PROJECT_ID --title 'API handoff' --tags handoff \
   --body 'Changed request validation. Race tests pass. Next: review the retry path.' \
   --links COORDINATION_ID --sources ISSUE_URL,COMMIT_URL
 
-./bin/herma history COORDINATION_ID
-./bin/herma list --project PROJECT_ID --kind task --status open
-./bin/herma list --project PROJECT_ID --kind note --tag handoff
+herma history COORDINATION_ID
+herma list --project PROJECT_ID --kind task --status open
+herma list --project PROJECT_ID --kind note --tag handoff
 ```
 
 Inside a checkout with a `.herma-project.json`, `create` puts tasks, feedback,
@@ -234,9 +234,9 @@ the authenticated identity and cover both creates and updates. The CLI generates
 a key if none is supplied; use explicit keys in resumable agent workflows.
 
 ```sh
-./bin/herma update RECORD_ID --version 3 --archived true
-./bin/herma list --include-archived
-./bin/herma update RECORD_ID --version 4 --archived false
+herma update RECORD_ID --version 3 --archived true
+herma list --include-archived
+herma update RECORD_ID --version 4 --archived false
 ```
 
 Notes allow archival/restoration only. To correct a note, append a new note
@@ -300,8 +300,8 @@ Each result carries `"reviewed": true` or `false`, so you can weigh
 unreviewed content:
 
 ```sh
-./bin/herma recall "snapshot pruning"
-./bin/herma recall "retry backoff" --include-proposed --limit 5
+herma recall "snapshot pruning"
+herma recall "retry backoff" --include-proposed --limit 5
 ```
 
 A record matches when it contains any of the words; longer words also match
@@ -333,9 +333,9 @@ the result. `--where` can repeat; filters combine with AND and with the other
 filters.
 
 ```sh
-./bin/herma list --kind bookmark --where 'rating>=4' --sort -read_at
-./bin/herma list --kind bookmark --where 'platform=youtube' --where 'read_at missing'
-./bin/herma list --kind bookmark --where 'authors has Hipp' --sort title
+herma list --kind bookmark --where 'rating>=4' --sort -read_at
+herma list --kind bookmark --where 'platform=youtube' --where 'read_at missing'
+herma list --kind bookmark --where 'authors has Hipp' --sort title
 ```
 
 Quote each expression for the shell. A filter is `<field><op><value>`,

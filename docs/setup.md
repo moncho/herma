@@ -5,29 +5,30 @@
 Requires **Go 1.27 or later**. The SQLite driver is pure Go; no C compiler,
 separate database server, model API key, or hosted account is required.
 
-Run these commands from the project's directory:
+Install herma from a checkout, then initialize and start it:
 
 ```sh
-go build -trimpath -buildvcs=false -o bin/herma ./cmd/herma
-./bin/herma init
-./bin/herma identity add session-a
-./bin/herma identity add session-b
-./bin/herma serve
+make install          # copies bin/herma to /usr/local/bin; BINDIR=~/.local/bin picks another folder
+herma init
+herma identity add session-a
+herma identity add session-b
+herma serve
 ```
 
-The service listens on `127.0.0.1:8765` and on a private Unix socket at
-`.herma/herma.sock`. Initialization creates `.herma/credentials.json` with two
-identities, `owner` (the reviewer) and `local-agent` (an agent), without
-overwriting an existing file. New identities are agents unless you pass
-`--role`. The database lives at `.herma/knowledge.sqlite3`. Keep the server
-terminal running and use another terminal in the same directory for client
-commands. Stop a foreground server with Ctrl-C; closing its terminal leaves it
-running, because the server treats `SIGHUP` as a request to reload credentials.
+`go install github.com/moncho/herma/cmd/herma@latest` works as well. The binary
+carries the Claude Code plugin, so it needs no checkout beside it.
 
-To put herma on your `PATH`, run `make install`, which copies the binary to
-`/usr/local/bin` (`make install BINDIR=~/.local/bin` picks another folder), or
-`go install github.com/moncho/herma/cmd/herma@latest`. The binary carries the
-Claude Code plugin, so it needs no checkout beside it.
+herma keeps its data in one folder, `~/.config/herma` unless `HERMA_DIR` names
+another. Initialization creates the folder (`0700`) and `credentials.json` in it
+with two identities, `owner` (the reviewer) and `local-agent` (an agent), without
+overwriting an existing file. New identities are agents unless you pass
+`--role`. The database is `knowledge.sqlite3` in the same folder, and the
+service listens on `127.0.0.1:8765` and on a private Unix socket, `herma.sock`,
+next to the credentials. Because nothing depends on the working folder, client
+commands work from any directory. Keep the server terminal running and use
+another terminal for client commands. Stop a foreground server with Ctrl-C;
+closing its terminal leaves it running, because the server treats `SIGHUP` as a
+request to reload credentials.
 
 ## Keep the service running on macOS
 
@@ -38,7 +39,7 @@ before switching to the background service.
 ```sh
 make service-start
 make service-status
-./bin/herma list
+herma list
 ```
 
 To take automatic backups, pass a folder that your sync tool copies off the
@@ -53,31 +54,33 @@ Give each database its own folder. On a new machine, run `herma restore` before
 starting the service with `BACKUP_DIR`: herma refuses to serve an empty database
 against a folder with newer snapshots.
 
-To keep the reviewer token out of `.herma/credentials.json`, add
+To keep the reviewer token out of the agents' `credentials.json`, add
 `REVIEWER_CREDENTIALS=/absolute/path/reviewer.json`; see
 [keeping the reviewer token out of the agents' file](operations.md#keeping-the-reviewer-token-out-of-the-agents-file).
 
-In the foreground, use `./bin/herma serve --backup-dir DIR`. See
+In the foreground, use `herma serve --backup-dir DIR`. See
 [backups and restore](operations.md#backups-and-restore).
 
-macOS manages the process and restarts it if it fails. Logs are in
-`.herma/server.log`. To stop it, run `make service-stop`; to deploy a rebuilt
-binary, stop it and run `make service-start` again. Credential changes are
+`make service-start` installs herma first and runs the installed binary on the
+data folder (`HERMA_DIR=…` picks another). macOS manages the process and restarts
+it if it fails. Logs are in `server.log` in the data folder. To stop it, run
+`make service-stop`; to deploy a new version, stop it and run `make
+service-start` again. Credential changes are
 picked up automatically. This job is registered for the current login session,
 so run `make service-start` again after logging out or rebooting. It does not
 install an automatic login item.
 
 If a client reports `connection refused`, or a reviewer command reports that
 nothing is listening on the socket, no service is running for these credentials.
-Start it with `make service-start` on macOS, or keep `./bin/herma serve` running in
+Start it with `make service-start` on macOS, or keep `herma serve` running in
 another terminal. The database and credentials remain on disk when the server
 stops; do not reinitialize them.
 
 ## Try the API and example
 
 ```sh
-./bin/herma schema
-./bin/herma list
+herma schema
+herma list
 go run -buildvcs=false ./examples/handover
 ```
 
@@ -90,23 +93,19 @@ persistence and competing edits are also exercised by the integration tests.
 ## Load context automatically in each session
 
 Create one herma project for the repository, then bind it from the repository root.
-Use an absolute path to your built herma executable and credentials if they live
-elsewhere. Replace `PROJECT_ID` with the ID returned by the first command:
+Replace `PROJECT_ID` with the ID returned by the first command:
 
 ```sh
 herma create --kind project --title 'My repository' --status active
 herma project bind --project PROJECT_ID --max-bytes 10000
-herma --credentials /absolute/path/credentials.json --identity local-agent \
-  hook install --client both
+herma --identity local-agent hook install --client both
 ```
 
 Use an agent identity; hook installation refuses the reviewer.
 
-If the service's credentials live elsewhere, set `HERMA_CREDENTIALS` to their
-absolute path before the create/bind commands too. `herma` above means the built
-executable on your PATH; otherwise use its full path. Install hooks using a
-built executable, not `go run`: the hook must be able to find the same
-executable in future sessions.
+The hook records the absolute paths of the herma executable and the credentials
+file. Install hooks using an installed executable, not `go run`: the hook must be
+able to find the same executable in future sessions.
 
 Use `--client claude` or `--client codex` to install for one client. Installation
 merges a synchronous SessionStart hook into `.claude/settings.local.json` and/or
@@ -156,7 +155,7 @@ coordinating an edit with another agent.
 
 ## Claude Code plugin
 
-In the Claude Code CLI, a plugin in `plugins/claude` adds a herma status line and
+In the Claude Code CLI, a plugin built into herma adds a herma status line and
 two read-only tools. The status line shows:
 
 | State | Text |
@@ -181,7 +180,7 @@ They are registered only in a bound checkout when the identity is an agent. If
 herma cannot be launched, the tool call returns an error.
 
 `herma hook install --client claude` (or `both`) installs the plugin after the
-hook. It writes the plugin built into herma to `~/.config/herma/plugins/claude`,
+hook. It writes the plugin built into herma to `plugins/claude` in the data folder,
 adds that folder to `env.CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json`
 (dropping any other folder holding a herma plugin, so only one loads), writes
 `pluginConfigs.herma.options` (`herma`, the herma executable; `credentials`, the

@@ -13,23 +13,20 @@ Start the herma service and create the identities you need using the
 create or choose one herma project and bind the checkout to it:
 
 ```sh
-herma --credentials /absolute/path/credentials.json --identity session-a \
-  create --kind project --title 'Repository sessions' --status active
+herma --identity session-a create --kind project --title 'Repository sessions' --status active
 
 # Replace PROJECT_ID with the returned project ID.
-herma --credentials /absolute/path/credentials.json --identity session-a \
-  project bind --project PROJECT_ID --max-bytes 10000
+herma --identity session-a project bind --project PROJECT_ID --max-bytes 10000
 
-herma --credentials /absolute/path/credentials.json --identity session-a \
-  hook install --client both
+herma --identity session-a hook install --client both
 ```
 
 These identities are agents: they can propose knowledge and principles but only
 the reviewer can accept them.
 
-Use the built executable and actual credential paths; do not install through
-`go run`, whose executable is temporary. Configure `HERMA_CREDENTIALS` (or pass the
-global flag) for subsequent commands if the credentials live elsewhere.
+Use the installed executable; do not install through `go run`, whose executable
+is temporary. Set `HERMA_DIR` or `HERMA_CREDENTIALS` (or pass `--credentials`) if
+the credentials are not in `~/.config/herma`.
 Named-identity setup requires
 `HERMA_TOKEN` to be unset; choose one authentication method. Choose the named
 identity used by this checkout's hook; other writers can use their own

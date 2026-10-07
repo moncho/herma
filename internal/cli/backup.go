@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -33,7 +34,7 @@ func restore(cfg config, args []string, stdout, stderr io.Writer) error {
 	}
 	source := args[0]
 	fs := flags("restore", stderr)
-	dbPath := fs.String("db", ".herma/knowledge.sqlite3", "database path to restore into")
+	dbPath := fs.String("db", filepath.Join(cfg.dir, "knowledge.sqlite3"), "database path to restore into")
 	replace := fs.Bool("replace", false, "move an existing database aside instead of refusing")
 	if err := parse(fs, args[1:]); err != nil {
 		return err
