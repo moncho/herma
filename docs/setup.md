@@ -185,7 +185,9 @@ credentials path; `identity`; and `url`, the server URL from `--url` or
 command adds nothing twice. The command finds the folder next to the built
 executable (`bin/herma`); set `HERMA_CLAUDE_PLUGIN_DIR` to use another one. If the
 folder is missing, the command fails after installing the hook. With `HERMA_TOKEN`
-set, the plugin step is skipped, because the plugin needs a credentials file.
+set, the plugin step is skipped, because the plugin needs a credentials file;
+on another machine, use a client file instead (see
+[remote clients](operations.md#remote-clients)).
 A symlinked `~/.claude` or `settings.json` is refused.
 
 The plugin reads its options from user settings only. If project or local

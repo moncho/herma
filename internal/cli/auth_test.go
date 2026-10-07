@@ -94,7 +94,7 @@ func TestSelectedIdentityWithoutTokenUsesCredentials(t *testing.T) {
 			if err := initCredentials(path); err != nil {
 				t.Fatal(err)
 			}
-			if err := addIdentity(path, "worker", store.RoleAgent); err != nil {
+			if err := addIdentity(path, "worker", store.RoleAgent, ""); err != nil {
 				t.Fatal(err)
 			}
 			credentials, err := loadCredentials(path)

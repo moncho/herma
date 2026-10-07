@@ -65,7 +65,7 @@ func startServeWith(t *testing.T, serveArgs []string, extra ...identitySpec) (st
 		t.Fatal(err)
 	}
 	for _, spec := range extra {
-		if err := addIdentity(credentials, spec.name, spec.role); err != nil {
+		if err := addIdentity(credentials, spec.name, spec.role, ""); err != nil {
 			t.Fatal(err)
 		}
 	}

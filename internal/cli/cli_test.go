@@ -74,10 +74,10 @@ func TestCredentialsCreationAndIdentityAddition(t *testing.T) {
 	if strings.Contains(stdout.String(), credentials["research-agent"].Token) {
 		t.Fatal("printed agent token")
 	}
-	if err := addIdentity(path, "research-agent", store.RoleAgent); err == nil {
+	if err := addIdentity(path, "research-agent", store.RoleAgent, ""); err == nil {
 		t.Fatal("replaced existing identity")
 	}
-	if err := addIdentity(path, "../bad", store.RoleAgent); err == nil {
+	if err := addIdentity(path, "../bad", store.RoleAgent, ""); err == nil {
 		t.Fatal("accepted invalid identity")
 	}
 	if err := os.Chmod(path, 0644); err != nil {
@@ -170,7 +170,7 @@ func TestListFiltersAndCredentialSelection(t *testing.T) {
 	if err := initCredentials(path); err != nil {
 		t.Fatal(err)
 	}
-	if err := addIdentity(path, "worker", store.RoleAgent); err != nil {
+	if err := addIdentity(path, "worker", store.RoleAgent, ""); err != nil {
 		t.Fatal(err)
 	}
 	credentials, err := loadCredentials(path)

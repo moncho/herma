@@ -173,10 +173,16 @@ func initCredentials(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("create credential directory: %w", err)
 	}
-	staged, err := stageCredentials(path, map[string]credential{
+	return createCredentials(path, map[string]credential{
 		"owner":       {Token: ownerToken, Role: store.RoleReviewer},
 		"local-agent": {Token: agentToken, Role: store.RoleAgent},
 	})
+}
+
+// createCredentials writes a new private credentials file at path and fails if
+// anything already exists there.
+func createCredentials(path string, credentials map[string]credential) error {
+	staged, err := stageCredentials(path, credentials)
 	if err != nil {
 		return err
 	}
@@ -225,14 +231,21 @@ func updateCredentials(path string, change func(map[string]credential) error) er
 	return nil
 }
 
-func addIdentity(path, name string, role store.Role) error {
+// addIdentity adds name to the file at path. With clientFile set, it also
+// writes clientFile holding only the new identity, for a client on another
+// machine; the identity is added only if that file is written.
+func addIdentity(path, name string, role store.Role, clientFile string) error {
 	if !identityPattern.MatchString(name) {
 		return fmt.Errorf("invalid identity %q: use 1–64 letters, digits, dots, underscores or hyphens, starting with a letter or digit", name)
 	}
 	if !role.Valid() {
 		return fmt.Errorf("role %q is not valid; use reviewer, agent, or read-only", role)
 	}
-	return updateCredentials(path, func(credentials map[string]credential) error {
+	if clientFile != "" && role == store.RoleReviewer {
+		return errors.New("a reviewer cannot use a client file: reviewer tokens work only on the server's local socket")
+	}
+	wrote := false
+	err := updateCredentials(path, func(credentials map[string]credential) error {
 		if _, ok := credentials[name]; ok {
 			return fmt.Errorf("identity %q already exists", name)
 		}
@@ -240,9 +253,20 @@ func addIdentity(path, name string, role store.Role) error {
 		if err != nil {
 			return err
 		}
-		credentials[name] = credential{Token: token, Role: role}
+		entry := credential{Token: token, Role: role}
+		if clientFile != "" {
+			if err := createCredentials(clientFile, map[string]credential{name: entry}); err != nil {
+				return fmt.Errorf("client file: %w", err)
+			}
+			wrote = true
+		}
+		credentials[name] = entry
 		return nil
 	})
+	if err != nil && wrote {
+		_ = os.Remove(clientFile)
+	}
+	return err
 }
 
 // revokeIdentity removes name from the file at path. It reports whether that

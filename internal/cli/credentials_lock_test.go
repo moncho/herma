@@ -85,7 +85,7 @@ func TestStaleCredentialsLockExplainsSafeRecovery(t *testing.T) {
 
 func TestCredentialsLockFileFailureDoesNotSuggestRemoval(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing directory", "credentials.json")
-	err := addIdentity(path, "research-agent", store.RoleAgent)
+	err := addIdentity(path, "research-agent", store.RoleAgent, "")
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected missing-parent failure, got %v", err)
 	}
