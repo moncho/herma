@@ -42,7 +42,7 @@ func InstallUserPlugin(home string, p UserPlugin) (Installation, error) {
 	if err != nil {
 		return result, fmt.Errorf("inspect %s: %w", result.Path, err)
 	}
-	after, err := mergeUserPlugin(before, p)
+	after, err := mergeUserPlugin(before, p, isHermaPlugin)
 	if err != nil {
 		return result, fmt.Errorf("invalid settings %s: %w", result.Path, err)
 	}
@@ -79,7 +79,10 @@ func InstallUserPlugin(home string, p UserPlugin) (Installation, error) {
 	return result, nil
 }
 
-func mergeUserPlugin(data []byte, p UserPlugin) ([]byte, error) {
+// mergeUserPlugin adds p to the settings in data. Plugin folders for which
+// replaced reports true, other copies of the herma plugin, are dropped so only
+// one loads.
+func mergeUserPlugin(data []byte, p UserPlugin, replaced func(dir string) bool) ([]byte, error) {
 	settings, err := parseSettings(data)
 	if err != nil {
 		return nil, err
@@ -95,7 +98,7 @@ func mergeUserPlugin(data []byte, p UserPlugin) ([]byte, error) {
 			return nil, fmt.Errorf("env.%s must be a string", pluginDirsKey)
 		}
 		for _, d := range filepath.SplitList(value) {
-			if d != "" {
+			if d != "" && (d == p.Dir || !replaced(d)) {
 				dirs = append(dirs, d)
 			}
 		}

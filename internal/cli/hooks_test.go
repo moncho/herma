@@ -439,6 +439,21 @@ func TestHookInstallRegistersClaudePluginUserWide(t *testing.T) {
 	if got := settings.PluginConfigs["herma"].Options["url"]; got == "" || got != os.Getenv("HERMA_URL") {
 		t.Fatalf("plugin url %q, want %q: %s", got, os.Getenv("HERMA_URL"), data)
 	}
+	override := os.Getenv("HERMA_CLAUDE_PLUGIN_DIR")
+	t.Setenv("HERMA_CLAUDE_PLUGIN_DIR", "")
+	if _, err := runCLI(t, "hook", "install", "--client", "claude", "--dir", root); err != nil {
+		t.Fatalf("install with the built-in plugin: %v", err)
+	}
+	builtin := filepath.Join(os.Getenv("HOME"), ".config", "herma", "plugins", "claude")
+	data, err = os.ReadFile(filepath.Join(os.Getenv("HOME"), ".claude", "settings.json"))
+	if err != nil || !strings.Contains(string(data), builtin) || strings.Contains(string(data), override) {
+		t.Fatalf("built-in plugin not registered: %s %v", data, err)
+	}
+	for _, file := range []string{".claude-plugin/plugin.json", "hooks/hooks.json", "hooks/register.ts"} {
+		if _, err := os.Stat(filepath.Join(builtin, file)); err != nil {
+			t.Errorf("built-in plugin lacks %s: %v", file, err)
+		}
+	}
 	t.Setenv("HERMA_CLAUDE_PLUGIN_DIR", filepath.Join(t.TempDir(), "missing"))
 	if _, err := runCLI(t, "hook", "install", "--client", "claude", "--dir", root); err == nil || !strings.Contains(err.Error(), "Claude Code plugin not found") {
 		t.Fatalf("missing plugin: %v", err)

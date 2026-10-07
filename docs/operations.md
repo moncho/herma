@@ -42,9 +42,9 @@ herma identity add laptop --client-file ~/laptop-credentials.json
 The client file is private (0600), is never written over an existing file, and
 cannot hold a reviewer. Move it privately to the other machine, for example to
 `~/.config/herma/credentials.json` with the same permissions, and delete the
-copy on the server machine. On the other machine, build herma from a checkout
-(`go build -o bin/herma ./cmd/herma`), then bind each repository and install the
-hooks from its root, naming the tunnel URL:
+copy on the server machine. On the other machine, install herma (`make install`
+in a checkout, or `go install github.com/moncho/herma/cmd/herma@latest`), then
+bind each repository and install the hooks from its root, naming the tunnel URL:
 
 ```sh
 herma --url https://herma.example.ts.net \
@@ -55,10 +55,10 @@ herma --url https://herma.example.ts.net \
   hook install --client claude
 ```
 
-`herma` above is the absolute path to that build. To end a machine's access, run
-`herma identity revoke laptop` on the server. Sessions that cannot keep a file,
-such as cloud sessions, use `HERMA_URL` and `HERMA_TOKEN` instead; they get
-session context but not the plugin.
+The hooks and the plugin record the installed binary's absolute path. To end a
+machine's access, run `herma identity revoke laptop` on the server. Sessions
+that cannot keep a file, such as cloud sessions, use `HERMA_URL` and
+`HERMA_TOKEN` instead; they get session context but not the plugin.
 
 The server can run on any machine with a local disk. To move it, stop the
 service, [restore](#backups-and-restore) the newest snapshot on the new machine,

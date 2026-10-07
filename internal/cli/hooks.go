@@ -20,6 +20,7 @@ import (
 	"github.com/moncho/herma/internal/project"
 	"github.com/moncho/herma/internal/rules"
 	"github.com/moncho/herma/internal/store"
+	"github.com/moncho/herma/plugins"
 )
 
 const hookTimeout = 5 * time.Second
@@ -142,26 +143,29 @@ func installHook(cfg config, args []string, stdout, stderr io.Writer) error {
 	return output(stdout, result)
 }
 
-// installClaudePlugin registers the repository's Claude Code plugin in the
-// user's settings, so every session loads it; it stays silent where no
-// checkout is bound.
+// installClaudePlugin writes herma's built-in Claude Code plugin under the
+// user's home and registers it in the user's settings, so every session loads
+// it; it stays silent where no checkout is bound. HERMA_CLAUDE_PLUGIN_DIR
+// registers that folder instead, for working on the plugin in a checkout.
 func installClaudePlugin(executable string, cfg config) (hooks.Installation, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return hooks.Installation{}, err
+	}
 	dir := os.Getenv("HERMA_CLAUDE_PLUGIN_DIR")
 	if dir == "" {
-		dir = filepath.Join(filepath.Dir(executable), "..", "plugins", "claude")
+		if dir, err = hooks.WritePlugin(home, plugins.Claude()); err != nil {
+			return hooks.Installation{}, err
+		}
 	}
-	dir, err := filepath.Abs(dir)
+	dir, err = filepath.Abs(dir)
 	if err != nil {
 		return hooks.Installation{}, err
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".claude-plugin", "plugin.json")); err != nil {
-		return hooks.Installation{}, fmt.Errorf("Claude Code plugin not found at %s; run herma from its repository build (bin/herma) or set HERMA_CLAUDE_PLUGIN_DIR", dir)
+		return hooks.Installation{}, fmt.Errorf("Claude Code plugin not found at %s; unset HERMA_CLAUDE_PLUGIN_DIR to use the built-in plugin", dir)
 	}
 	credentials, err := filepath.Abs(cfg.credentials)
-	if err != nil {
-		return hooks.Installation{}, err
-	}
-	home, err := os.UserHomeDir()
 	if err != nil {
 		return hooks.Installation{}, err
 	}
