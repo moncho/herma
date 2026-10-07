@@ -1,7 +1,18 @@
-.PHONY: build test run service-start service-stop service-status
+.PHONY: build install uninstall test run service-start service-stop service-status
 
 build:
 	go build -trimpath -buildvcs=false -o bin/herma ./cmd/herma
+
+# The binary carries the Claude Code plugin, so a plain copy is enough.
+# Override the target folder with: make install BINDIR=~/.local/bin
+BINDIR ?= /usr/local/bin
+
+install: build
+	install -d "$(BINDIR)"
+	install -m 0755 bin/herma "$(BINDIR)/herma"
+
+uninstall:
+	rm -f "$(BINDIR)/herma"
 
 test:
 	go test -race ./...

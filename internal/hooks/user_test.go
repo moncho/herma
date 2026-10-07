@@ -20,7 +20,7 @@ func decodeSettings(t *testing.T, data []byte) map[string]any {
 }
 
 func TestMergeUserPluginIntoEmptySettings(t *testing.T) {
-	data, err := mergeUserPlugin(nil, testPlugin)
+	data, err := mergeUserPlugin(nil, testPlugin, notHerma)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestMergeUserPluginKeepsOtherDirs(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			in := `{"env":{"CLAUDE_CODE_PLUGIN_DIRS":` + strconvQuote(existing) + `,"OTHER":"1"}}`
-			data, err := mergeUserPlugin([]byte(in), testPlugin)
+			data, err := mergeUserPlugin([]byte(in), testPlugin, notHerma)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -72,15 +72,50 @@ func TestMergeUserPluginKeepsOtherDirs(t *testing.T) {
 	}
 }
 
+func notHerma(string) bool { return false }
+
+func TestMergeUserPluginReplacesOtherHermaPluginDirs(t *testing.T) {
+	sep := string(os.PathListSeparator)
+	in := `{"env":{"CLAUDE_CODE_PLUGIN_DIRS":"/a` + sep + `/old/herma/plugins/claude` + sep + `/b"}}`
+	data, err := mergeUserPlugin([]byte(in), testPlugin, func(dir string) bool { return dir == "/old/herma/plugins/claude" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := decodeSettings(t, data)["env"].(map[string]any)["CLAUDE_CODE_PLUGIN_DIRS"]
+	if want := "/a" + sep + "/b" + sep + testPlugin.Dir; got != want {
+		t.Fatalf("dirs %q, want %q", got, want)
+	}
+}
+
+func TestIsHermaPluginReadsTheManifestName(t *testing.T) {
+	dir := t.TempDir()
+	manifest := func(name, data string) string {
+		plugin := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Join(plugin, ".claude-plugin"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(plugin, ".claude-plugin", "plugin.json"), []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+		return plugin
+	}
+	if !isHermaPlugin(manifest("herma", `{"name":"herma","version":"0.1.0"}`)) {
+		t.Error("herma manifest not recognized")
+	}
+	if isHermaPlugin(manifest("other", `{"name":"other"}`)) || isHermaPlugin(manifest("broken", `{`)) || isHermaPlugin(filepath.Join(dir, "missing")) {
+		t.Error("recognized a folder that is not the herma plugin")
+	}
+}
+
 func strconvQuote(s string) string { b, _ := json.Marshal(s); return string(b) }
 
 func TestMergeUserPluginPreservesUnrelatedSettingsAndIsIdempotent(t *testing.T) {
 	in := `{"model":"opus","permissions":{"allow":["Bash(ls)"],"deny":["Read(//x)"]},"pluginConfigs":{"other":{"options":{"a":1}}},"hooks":{"Stop":[]}}`
-	once, err := mergeUserPlugin([]byte(in), testPlugin)
+	once, err := mergeUserPlugin([]byte(in), testPlugin, notHerma)
 	if err != nil {
 		t.Fatal(err)
 	}
-	twice, err := mergeUserPlugin(once, testPlugin)
+	twice, err := mergeUserPlugin(once, testPlugin, notHerma)
 	if err != nil || string(once) != string(twice) {
 		t.Fatalf("not idempotent:\n%s\n%s", once, twice)
 	}
@@ -106,7 +141,7 @@ func TestMergeUserPluginRejectsWrongTypes(t *testing.T) {
 		"not json":           `{`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := mergeUserPlugin([]byte(in), testPlugin); err == nil {
+			if _, err := mergeUserPlugin([]byte(in), testPlugin, notHerma); err == nil {
 				t.Fatal("accepted")
 			}
 		})

@@ -24,6 +24,11 @@ terminal running and use another terminal in the same directory for client
 commands. Stop a foreground server with Ctrl-C; closing its terminal leaves it
 running, because the server treats `SIGHUP` as a request to reload credentials.
 
+To put herma on your `PATH`, run `make install`, which copies the binary to
+`/usr/local/bin` (`make install BINDIR=~/.local/bin` picks another folder), or
+`go install github.com/moncho/herma/cmd/herma@latest`. The binary carries the
+Claude Code plugin, so it needs no checkout beside it.
+
 ## Keep the service running on macOS
 
 Once credentials have been initialized, use these commands to run the service
@@ -176,15 +181,17 @@ They are registered only in a bound checkout when the identity is an agent. If
 herma cannot be launched, the tool call returns an error.
 
 `herma hook install --client claude` (or `both`) installs the plugin after the
-hook. It adds the repository's `plugins/claude` folder to
-`env.CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json`, writes
+hook. It writes the plugin built into herma to `~/.config/herma/plugins/claude`,
+adds that folder to `env.CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json`
+(dropping any other folder holding a herma plugin, so only one loads), writes
 `pluginConfigs.herma.options` (`herma`, the herma executable; `credentials`, the
 credentials path; `identity`; and `url`, the server URL from `--url` or
 `HERMA_URL`), and allows `mcp__herma__recall` and `mcp__herma__get` under
 `permissions.allow`. Everything else in the file is kept, and repeating the
-command adds nothing twice. The command finds the folder next to the built
-executable (`bin/herma`); set `HERMA_CLAUDE_PLUGIN_DIR` to use another one. If the
-folder is missing, the command fails after installing the hook. With `HERMA_TOKEN`
+command adds nothing twice. Run it again after upgrading herma to refresh the
+plugin. To work on the plugin itself, set `HERMA_CLAUDE_PLUGIN_DIR` to a
+checkout's `plugins/claude` and herma registers that folder instead; if it is
+missing, the command fails after installing the hook. With `HERMA_TOKEN`
 set, the plugin step is skipped, because the plugin needs a credentials file;
 on another machine, use a client file instead (see
 [remote clients](operations.md#remote-clients)).
@@ -203,7 +210,7 @@ Outside a bound checkout it stays silent.
 To remove it, delete the herma path from `env.CLAUDE_CODE_PLUGIN_DIRS`, the
 `pluginConfigs.herma` entry (with its four options `herma`, `credentials`, `identity`
 and `url`) and the two `mcp__herma__` rules from
-`~/.claude/settings.json`.
+`~/.claude/settings.json`, and delete `~/.config/herma/plugins/claude`.
 
 The status line reads `herma status`, which you can also run yourself inside a
 bound checkout:
