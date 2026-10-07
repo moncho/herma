@@ -58,7 +58,7 @@ Not all reviewed knowledge is loaded here. When a task touches past decisions or
 
 ## Quick start
 
-Requires Go 1.26 or later.
+Requires Go 1.27 or later.
 
 ```sh
 go build -trimpath -buildvcs=false -o bin/herma ./cmd/herma
