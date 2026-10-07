@@ -281,6 +281,34 @@ func TestRunSnapshotsOnEveryTick(t *testing.T) {
 	}
 }
 
+func TestRunSnapshotsWhenWallClockPassesIntervalDuringSleep(t *testing.T) {
+	s := openStore(t)
+	dir := t.TempDir()
+	c := &clock{now: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)}
+	r, _ := newRunner(t, s, dir, 14, c)
+	r.check = 5 * time.Millisecond
+	write(t, s, "before sleep")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go r.Run(ctx)
+	time.Sleep(50 * time.Millisecond)
+	if names, _ := List(dir); len(names) != 0 {
+		t.Fatalf("snapshot written before the interval passed: %v", names)
+	}
+	// A sleeping machine pauses monotonic timers but not the wall clock.
+	c.Advance(time.Hour)
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if names, _ := List(dir); len(names) == 1 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Run did not snapshot after the wall clock passed the interval")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func TestSnapshotAfterClockMovesBackwardsStaysNewest(t *testing.T) {
 	s := openStore(t)
 	dir := t.TempDir()
