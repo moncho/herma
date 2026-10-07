@@ -360,7 +360,7 @@ records without the field. You can give at most 10 filters.
 `--sort` takes up to 3 comma-separated keys, such as `--sort -read_at,title`.
 A leading `-` sorts descending. Records without a value come last, and ties
 break by record ID. Keys are a scalar field of the kind, or one of `priority`,
-`created`, `updated`, `title` and `status`; the core keys win over a field of
+`created_at`, `updated_at`, `title` and `status`; the core keys win over a field of
 the same name. Without `--sort`, lists keep the default order: priority, then
 most recent update.
 

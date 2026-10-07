@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -124,14 +125,14 @@ func sqlArg(t FieldType, value any) any {
 	return value
 }
 
-// coreSortKeys maps sortable record columns to SQL. They win over a typed
-// field with the same name.
+// coreSortKeys maps sortable record columns to SQL, named like the record's
+// JSON fields. They win over a typed field with the same name.
 var coreSortKeys = map[string]string{
-	"priority": "r.priority",
-	"updated":  "r.updated_ns",
-	"created":  "unixepoch(json_extract(r.data, '$.created_at'), 'subsec')",
-	"title":    "json_extract(r.data, '$.title')",
-	"status":   "r.status",
+	"priority":   "r.priority",
+	"updated_at": "r.updated_ns",
+	"created_at": "unixepoch(json_extract(r.data, '$.created_at'), 'subsec')",
+	"title":      "json_extract(r.data, '$.title')",
+	"status":     "r.status",
 }
 
 // parseSort turns a sort spec into an ORDER BY list that always ends with the
@@ -167,7 +168,7 @@ func parseSort(k *Kind, spec string) (string, error) {
 		}
 		f, ok := k.Definition.Schema[name]
 		if !ok {
-			return "", bad("unknown field of kind " + k.Name)
+			return "", bad("unknown field of kind " + k.Name + "; " + sortKeysHint(k))
 		}
 		if f.Type == FieldStringList {
 			return "", bad("string-list fields cannot be sorted")
@@ -181,4 +182,24 @@ func parseSort(k *Kind, spec string) (string, error) {
 		terms = append(terms, "("+value+" IS NULL)", sortValue+direction)
 	}
 	return strings.Join(append(terms, "r.id ASC"), ", "), nil
+}
+
+// sortKeysHint names the keys a list of kind k can sort by.
+func sortKeysHint(k *Kind) string {
+	var core, fields []string
+	for name := range coreSortKeys {
+		core = append(core, name)
+	}
+	for name, f := range k.Definition.Schema {
+		if f.Type != FieldStringList {
+			fields = append(fields, name)
+		}
+	}
+	slices.Sort(core)
+	slices.Sort(fields)
+	hint := "sort keys are " + strings.Join(core, ", ")
+	if len(fields) > 0 {
+		hint += " and the fields " + strings.Join(fields, ", ")
+	}
+	return hint
 }
