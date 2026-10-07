@@ -40,7 +40,7 @@ func TestListFiltersAndSortsByFields(t *testing.T) {
 	for _, c := range []struct{ query, want string }{
 		{"where=rating%3E%3D4", "where requires a kind filter"},
 		{"kind=bookmark&where=rating%3E%3Dfour", `where "rating>=four": fields.rating: must be an integer`},
-		{"kind=bookmark&sort=colour", `sort "colour": unknown field of kind bookmark`},
+		{"kind=bookmark&sort=colour", `sort "colour": unknown field of kind bookmark; sort keys are created_at, priority, status, title, updated_at and the fields rating, read_at`},
 		{"kind=bookmark&kind=task", `query parameter "kind" must appear once`},
 		{"kind=bookmark&sort=-rating&sort=rating", `query parameter "sort" must appear once`},
 	} {

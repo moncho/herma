@@ -50,7 +50,7 @@ func schemaDocument(kinds []store.Kind) map[string]any {
 		"review":       "accepted knowledge and principles require at least one source; agents cannot change accepted, rejected or superseded records; forbidden writes return 403 forbidden and change nothing",
 		"list_filters": []string{"kind", "project_id", "global", "status", "owner", "tag", "q", "where", "sort", "include_archived", "limit", "offset"},
 		"list_where":   "where=<field><op><value> (repeatable, AND): = != on every scalar field; < <= > >= on integer, number, date, datetime, string and url; '<field> has <item>' on string-list; '<field> exists' or '<field> missing'; dates compare by calendar day, datetimes by instant to the millisecond; values are trimmed and use the field's write rules; requires kind; at most 10",
-		"list_sort":    "sort=key[,key…]: up to 3 keys, '-' for descending; a scalar field of the kind (requires kind) or priority, created, updated, title, status (these win over a field of the same name); missing values last; ties by record ID",
+		"list_sort":    "sort=key[,key…]: up to 3 keys, '-' for descending; a scalar field of the kind (requires kind) or priority, created_at, updated_at, title, status (these win over a field of the same name); missing values last; ties by record ID",
 		"context": map[string]any{
 			"scope": contextScope,
 			"query": map[string]string{

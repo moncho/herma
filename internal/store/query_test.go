@@ -140,17 +140,20 @@ func TestWhereRejectsBadExpressions(t *testing.T) {
 func TestSortByFieldsAndCoreColumns(t *testing.T) {
 	s := queryFixture(t)
 	for spec, want := range map[string]string{
-		"-i":        "B,C,A",
-		"i":         "A,C,B",
-		"n":         "A,B,C",
-		"-n":        "B,A,C",
-		"dt":        "A,B,C",
-		"-dt":       "B,A,C",
-		"e,-i":      "C,A,B",
-		"title":     "A,B,C",
-		"-title":    "C,B,A",
-		"-priority": "B,C,A",
-		"priority":  "A,C,B",
+		"-i":               "B,C,A",
+		"i":                "A,C,B",
+		"n":                "A,B,C",
+		"-n":               "B,A,C",
+		"dt":               "A,B,C",
+		"-dt":              "B,A,C",
+		"e,-i":             "C,A,B",
+		"title":            "A,B,C",
+		"-title":           "C,B,A",
+		"-priority":        "B,C,A",
+		"priority":         "A,C,B",
+		"updated_at":       "A,B,C",
+		"-updated_at":      "C,B,A",
+		"created_at,title": "A,B,C",
 	} {
 		t.Run(spec, func(t *testing.T) {
 			if got := strings.Join(listTitles(t, s, ListOptions{Kind: "item", Sort: spec}), ","); got != want {
@@ -176,11 +179,12 @@ func TestSortByFieldsAndCoreColumns(t *testing.T) {
 func TestSortRejectsBadSpecs(t *testing.T) {
 	s := queryFixture(t)
 	for spec, want := range map[string]string{
-		"a,b,c,d": "sort supports at most 3 keys",
-		"colour":  `sort "colour": unknown field of kind item`,
-		"l":       `sort "l": string-list fields cannot be sorted`,
-		"i,-i":    `sort "-i": repeated sort key`,
-		"i,":      `sort "": empty sort key`,
+		"a,b,c,d":  "sort supports at most 3 keys",
+		"colour":   `sort "colour": unknown field of kind item; sort keys are created_at, priority, status, title, updated_at and the fields b, d, dt, e, i, n, s, t, u`,
+		"-updated": `sort "-updated": unknown field of kind item; sort keys are created_at, priority, status, title, updated_at and the fields b, d, dt, e, i, n, s, t, u`,
+		"l":        `sort "l": string-list fields cannot be sorted`,
+		"i,-i":     `sort "-i": repeated sort key`,
+		"i,":       `sort "": empty sort key`,
 	} {
 		t.Run(spec, func(t *testing.T) {
 			_, err := s.List(context.Background(), ListOptions{Kind: "item", Sort: spec})
