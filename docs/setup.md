@@ -50,6 +50,11 @@ starts the service from another directory:
 make service-start BACKUP_DIR="$HOME/Library/Mobile Documents/com~apple~CloudDocs/herma-backups"
 ```
 
+macOS keeps background services out of iCloud Drive until you allow it: add the
+installed `herma` to System Settings → Privacy & Security → Full Disk Access, or
+the service waits on the folder and logs that it is still waiting. macOS ties
+the permission to the binary, so a newly built herma may need it again.
+
 Give each database its own folder. On a new machine, run `herma restore` before
 starting the service with `BACKUP_DIR`: herma refuses to serve an empty database
 against a folder with newer snapshots.
