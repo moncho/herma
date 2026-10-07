@@ -101,6 +101,7 @@ type Runner struct {
 	cfg   Config
 	log   io.Writer
 	now   func() time.Time
+	check time.Duration // how often Run compares the wall clock with the interval
 
 	snapshotMu sync.Mutex
 	stateMu    sync.Mutex
@@ -123,7 +124,7 @@ func New(s *store.Store, cfg Config, log io.Writer, now func() time.Time) (*Runn
 	if err := CheckDir(cfg.Dir); err != nil {
 		return nil, err
 	}
-	r := &Runner{store: s, cfg: cfg, log: log, now: now}
+	r := &Runner{store: s, cfg: cfg, log: log, now: now, check: min(cfg.Every, time.Minute)}
 	name, snapshot, skipped, err := newestValid(cfg.Dir)
 	for _, bad := range skipped {
 		fmt.Fprintf(log, "herma: backup ignored invalid snapshot %s\n", bad)
@@ -268,17 +269,24 @@ func (r *Runner) prune() error {
 	return errors.Join(errs...)
 }
 
-// Run takes a snapshot on every interval tick until ctx ends. Failures are
-// logged and recorded by Snapshot; the next tick retries.
+// Run takes a snapshot each time the interval passes on the wall clock, until
+// ctx ends. Timers pause while macOS sleeps, so Run checks the wall clock
+// often instead of waiting one interval. Failures are logged and recorded by
+// Snapshot; the next interval retries.
 func (r *Runner) Run(ctx context.Context) {
-	ticker := time.NewTicker(r.cfg.Every)
+	ticker := time.NewTicker(r.check)
 	defer ticker.Stop()
+	// UTC strips the monotonic reading, so Sub measures wall-clock time.
+	last := r.now().UTC()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_, _ = r.Snapshot(ctx)
+			if now := r.now().UTC(); now.Sub(last) >= r.cfg.Every {
+				last = now
+				_, _ = r.Snapshot(ctx)
+			}
 		}
 	}
 }

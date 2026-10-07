@@ -91,8 +91,10 @@ should use a database backup instead.
 
 `herma serve --backup-dir DIR` writes a snapshot of the database into `DIR` at
 startup, every six hours (`--backup-every`, minimum `5m`) and on a graceful
-shutdown, skipping it when nothing changed. It keeps the newest 14 snapshots
-(`--backup-keep`, minimum `1`) and never touches other files in the folder.
+shutdown, skipping it when nothing changed. The interval is wall-clock time: a
+machine that slept past it takes a snapshot within a minute of waking. It keeps
+the newest 14 snapshots (`--backup-keep`, minimum `1`) and never touches other
+files in the folder.
 `--backup-every` and `--backup-keep` require `--backup-dir`, and `herma serve`
 refuses to start if `DIR` is missing, not a directory or not writable. Point
 `DIR` at a folder your sync tool already copies off the machine: herma uploads
