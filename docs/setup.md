@@ -2,7 +2,7 @@
 
 ## Build and start the service
 
-Requires **Go 1.26 or later**. The SQLite driver is pure Go; no C compiler,
+Requires **Go 1.27 or later**. The SQLite driver is pure Go; no C compiler,
 separate database server, model API key, or hosted account is required.
 
 Run these commands from the project's directory:
