@@ -92,6 +92,53 @@ func TestIdentityAddDefaultsToAgentAndRevokeRemoves(t *testing.T) {
 	}
 }
 
+func TestIdentityAddWritesAClientFileWithOnlyThatIdentity(t *testing.T) {
+	cleanEnv(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "credentials.json")
+	run := func(args ...string) error {
+		var stdout, stderr bytes.Buffer
+		return Run(context.Background(), append([]string{"--credentials", path}, args...), &stdout, &stderr)
+	}
+	if err := run("init"); err != nil {
+		t.Fatal(err)
+	}
+	client := filepath.Join(dir, "laptop.json")
+	if err := run("identity", "add", "laptop", "--client-file", client); err != nil {
+		t.Fatal(err)
+	}
+	server, err := loadCredentials(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadCredentials(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got["laptop"] != server["laptop"] || got["laptop"].Role != store.RoleAgent {
+		t.Fatalf("client file holds %+v", got)
+	}
+
+	if err := run("identity", "add", "second", "--client-file", client); err == nil {
+		t.Fatal("overwrote an existing client file")
+	}
+	if err := run("identity", "add", "boss", "--role", "reviewer", "--client-file", filepath.Join(dir, "boss.json")); err == nil {
+		t.Fatal("wrote a client file for a reviewer")
+	}
+	if err := run("identity", "add", "nowhere", "--client-file", filepath.Join(dir, "missing", "c.json")); err == nil {
+		t.Fatal("accepted a client file in a missing folder")
+	}
+	server, err = loadCredentials(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"second", "boss", "nowhere"} {
+		if _, ok := server[name]; ok {
+			t.Errorf("failed add still created identity %q", name)
+		}
+	}
+}
+
 func TestLoadCredentialsAcceptsAgentOnlyFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "credentials.json")
 	token := strings.Repeat("a", 64)

@@ -41,8 +41,9 @@ HERMA_IDENTITY. Unset HERMA_TOKEN to use a named identity from the credentials f
 
 Commands:
   init                         Create owner (reviewer) and local-agent credentials without overwriting
-  identity add NAME [--role agent|read-only|reviewer]
-                               Add credentials; the role defaults to agent
+  identity add NAME [--role agent|read-only|reviewer] [--client-file PATH]
+                               Add credentials; the role defaults to agent. --client-file also
+                               writes a file with only this identity for another machine
   identity revoke NAME         Remove an identity; herma serve keeps at least one reviewer
   whoami                       Show the authenticated identity, role and listener
   serve [--db PATH] [--listen HOST:PORT] [--reviewer-credentials PATH] [--backup-dir DIR] [--backup-every 6h] [--backup-keep 14]
@@ -562,7 +563,7 @@ func list(ctx context.Context, cfg config, args []string, stdout, stderr io.Writ
 }
 
 func identityCommand(cfg config, args []string, stdout, stderr io.Writer) error {
-	usage := errors.New("usage: herma [global flags] identity add NAME [--role agent|read-only|reviewer] | identity revoke NAME")
+	usage := errors.New("usage: herma [global flags] identity add NAME [--role agent|read-only|reviewer] [--client-file PATH] | identity revoke NAME")
 	if len(args) < 2 || strings.HasPrefix(args[1], "-") {
 		return usage
 	}
@@ -571,13 +572,19 @@ func identityCommand(cfg config, args []string, stdout, stderr io.Writer) error 
 	case "add":
 		fs := flags("identity add", stderr)
 		role := fs.String("role", string(store.RoleAgent), "reviewer, agent, or read-only")
+		clientFile := fs.String("client-file", "", "also write a new credentials file holding only this identity, for a client on another machine")
 		if err := parse(fs, args[2:]); err != nil {
 			return err
 		}
-		if err := addIdentity(cfg.credentials, name, store.Role(*role)); err != nil {
+		if err := addIdentity(cfg.credentials, name, store.Role(*role), *clientFile); err != nil {
 			return err
 		}
-		return output(stdout, map[string]string{"status": "created", "identity": name, "role": *role, "credentials": cfg.credentials, "message": "The running server loads new identities within a few seconds."})
+		result := map[string]string{"status": "created", "identity": name, "role": *role, "credentials": cfg.credentials, "message": "The running server loads new identities within a few seconds."}
+		if *clientFile != "" {
+			result["client_file"] = *clientFile
+			result["message"] += " Move the client file to the other machine privately and delete it here."
+		}
+		return output(stdout, result)
 	case "revoke":
 		if len(args) != 2 {
 			return usage

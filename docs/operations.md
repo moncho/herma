@@ -8,10 +8,10 @@ knowledge base shared with their agents, not a multi-user service.
 
 `herma serve` listens only on loopback addresses. To reach it from other machines or
 cloud sessions, put a tunnel or proxy in front of the TCP port, for example
-Tailscale Serve, and give each remote session its own agent or read-only token
-through `HERMA_URL` and `HERMA_TOKEN`. Never distribute the credentials file. A tunnel
-forwards only TCP, and the server refuses reviewer tokens over TCP, so a reviewer
-token copied to another machine is useless there.
+Tailscale Serve, and give each client its own agent or read-only identity (see
+[remote clients](#remote-clients)). Never copy the server's credentials file. A
+tunnel forwards only TCP, and the server refuses reviewer tokens over TCP, so a
+reviewer token copied to another machine is useless there.
 
 `HERMA_TOKEN` cannot be combined with `--identity` or a nonempty `HERMA_IDENTITY`;
 unset it to use a named identity. Tokens are never included in API responses.
@@ -25,6 +25,46 @@ read the credentials file or connect to the socket, and with shell access it can
 run reviewer commands itself (for example `herma --identity owner update ...`), so
 that case is out of scope. Agent-client permission rules reduce accidental access
 but cannot reliably stop a process from connecting to the socket.
+
+## Remote clients
+
+A machine that reaches the server through the tunnel gets what the server
+machine gets, except reviewing: session context, the generated principles file
+and, in the Claude Code CLI, the plugin's status line and tools. Give each
+machine its own identity and a client credentials file holding only that
+identity:
+
+```sh
+# On the server machine
+herma identity add laptop --client-file ~/laptop-credentials.json
+```
+
+The client file is private (0600), is never written over an existing file, and
+cannot hold a reviewer. Move it privately to the other machine, for example to
+`~/.config/herma/credentials.json` with the same permissions, and delete the
+copy on the server machine. On the other machine, build herma from a checkout
+(`go build -o bin/herma ./cmd/herma`), then bind each repository and install the
+hooks from its root, naming the tunnel URL:
+
+```sh
+herma --url https://herma.example.ts.net \
+  --credentials ~/.config/herma/credentials.json --identity laptop \
+  project bind --project PROJECT_ID
+herma --url https://herma.example.ts.net \
+  --credentials ~/.config/herma/credentials.json --identity laptop \
+  hook install --client claude
+```
+
+`herma` above is the absolute path to that build. To end a machine's access, run
+`herma identity revoke laptop` on the server. Sessions that cannot keep a file,
+such as cloud sessions, use `HERMA_URL` and `HERMA_TOKEN` instead; they get
+session context but not the plugin.
+
+The server can run on any machine with a local disk. To move it, stop the
+service, [restore](#backups-and-restore) the newest snapshot on the new machine,
+copy the server's credentials files there privately (snapshots hold no
+credentials), start the service and point the tunnel at it. Clients keep their
+files.
 
 ## Keeping the reviewer token out of the agents' file
 
