@@ -30,19 +30,22 @@ func TestServedPrinciplesReachClaudeThroughTheRulesFile(t *testing.T) {
 			} `json:"hookSpecificOutput"`
 		}
 		data := runInput(t, context.Background(), hookEvent(t, root), "hook", "session-start", "--client", "claude")
+		if len(data) == 0 {
+			return ""
+		}
 		if err := json.Unmarshal(data, &out); err != nil {
 			t.Fatalf("hook output: %s", data)
 		}
 		return out.Hook.Context
 	}
-	if first := hook(); !strings.Contains(first, "## Principles changed") || !strings.Contains(first, "Run the race detector") {
+	if first := hook(); !strings.Contains(first, "## Project principles changed") || !strings.Contains(first, "Run the race detector") {
 		t.Fatalf("first session:\n%s", first)
 	}
 	file, err := os.ReadFile(filepath.Join(root, rules.Path))
 	if err != nil || !strings.Contains(string(file), "## Run the race detector") {
 		t.Fatalf("rules file: %s %v", file, err)
 	}
-	if second := hook(); strings.Contains(second, "## Principles") || !strings.Contains(second, "herma recall") {
+	if second := hook(); second != "" {
 		t.Fatalf("second session:\n%s", second)
 	}
 }

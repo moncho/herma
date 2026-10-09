@@ -57,7 +57,7 @@ func schemaDocument(kinds []store.Kind) map[string]any {
 				"project_id":      "required unarchived project ID",
 				"max_bytes":       "complete response bytes in the requested format, including metadata and newline; default 10000, minimum 2048, maximum 65536",
 				"format":          "json (default), text or summary; text is the compact rendering sessions read; summary is one line of section counts (empty when nothing is open) that ignores max_bytes and principles",
-				"principles":      "include (default), omit, changed or replace; changed (text format only) labels them as replacing .claude/rules/herma/principles.md after it changed; replace (text format only) labels them as replacing that file because herma could not update it",
+				"principles":      "include (default) or omit",
 				"include_durable": "boolean, default false; true adds accepted global/project knowledge after coordination records and notes",
 			},
 			"selection":            "project identity is always present; a kinds line names accepted custom kinds usable here; accepted principles (project and global) come first and use at most half of max_bytes; then sections from kind policies: tasks and feedback by priority then recency, then recent notes, then optional knowledge, then custom kinds by name, each capped by its max_records; a custom kind's section is listed only once one of its records fits; at most 100 candidates per section; kinds lists at most 20 names, fewer when the budget requires, and kinds_more counts the rest; a recall hint points to GET /v1/recall",

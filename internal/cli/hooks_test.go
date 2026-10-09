@@ -97,24 +97,16 @@ func TestBoundContextAndSessionStartLoadFreshCoordination(t *testing.T) {
 		}
 	}
 	check(runInput(t, context.Background(), "", "context", "--format", "json"))
-	var envelope struct {
-		Hook struct {
-			Event   string `json:"hookEventName"`
-			Context string `json:"additionalContext"`
-		} `json:"hookSpecificOutput"`
+	// Session start loads only counts; the records stay behind herma context.
+	for _, client := range []string{"claude", "codex"} {
+		got := runSessionHook(t, nested, "--client", client)
+		if !strings.HasPrefix(got.Context, "herma coordination: Tasks 1 · Notes 1 (latest ") || strings.Contains(got.Context, "Session A") || strings.Contains(got.Context, "handoff") || strings.Contains(got.Context, "Durable") {
+			t.Fatalf("%s session start: %+v", client, got)
+		}
 	}
-	data := runInput(t, context.Background(), hookEvent(t, nested), "hook", "session-start")
-	if err := json.Unmarshal(data, &envelope); err != nil {
-		t.Fatal(err)
-	}
-	if envelope.Hook.Event != "SessionStart" {
-		t.Fatalf("wrong hook response: %s", data)
-	}
-	check([]byte(envelope.Hook.Context))
 	create(store.CreateInput{Kind: "note", Title: "Fresh handoff after first startup", ProjectID: p.ID})
-	data = runInput(t, context.Background(), hookEvent(t, nested), "hook", "session-start")
-	if !bytes.Contains(data, []byte("Fresh handoff after first startup")) {
-		t.Fatal("hook reused stale context")
+	if got := runSessionHook(t, nested, "--client", "codex"); !strings.Contains(got.Context, "Notes 2") {
+		t.Fatalf("hook reused stale counts: %+v", got)
 	}
 	records, err := db.List(context.Background(), store.ListOptions{Archived: true, Limit: 200})
 	if err != nil || records.Total != 5 {
@@ -198,25 +190,28 @@ func TestSessionStartFailuresAreBoundedAndDoNotBlock(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("HERMA_URL", server.URL)
-	for _, input := range []string{hookEvent(t, root), `{`, `{ "hook_event_name":"SessionStart", "cwd":"relative" }`, strings.Repeat("x", maxHookInput+1)} {
-		data := runInput(t, context.Background(), input, "hook", "session-start")
-		if !json.Valid(data) || !bytes.Contains(data, []byte("systemMessage")) || bytes.Contains(data, []byte("additionalContext")) || bytes.Contains(data, []byte("private-test-token")) || len(data) > 512 {
-			t.Fatalf("bad fail-open warning: %s", data)
-		}
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	data := runInput(t, ctx, hookEvent(t, root), "hook", "session-start")
-	if !bytes.Contains(data, []byte("systemMessage")) {
-		t.Fatal("canceled request did not fail open")
-	}
 	unbound := t.TempDir()
 	if err := os.Mkdir(filepath.Join(unbound, ".git"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	data = runInput(t, context.Background(), hookEvent(t, unbound), "hook", "session-start")
-	if len(data) != 0 {
-		t.Fatalf("unbound projects should be a quiet no-op: %s", data)
+	for _, client := range [][]string{nil, {"--client", "claude"}, {"--client", "codex"}} {
+		args := append([]string{"hook", "session-start"}, client...)
+		for _, input := range []string{hookEvent(t, root), `{`, `{ "hook_event_name":"SessionStart", "cwd":"relative" }`, strings.Repeat("x", maxHookInput+1)} {
+			data := runInput(t, context.Background(), input, args...)
+			if !json.Valid(data) || !bytes.Contains(data, []byte("systemMessage")) || bytes.Contains(data, []byte("additionalContext")) || bytes.Contains(data, []byte("private-test-token")) || len(data) > 512 {
+				t.Fatalf("%v: bad fail-open warning: %s", client, data)
+			}
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		data := runInput(t, ctx, hookEvent(t, root), args...)
+		if !bytes.Contains(data, []byte("systemMessage")) {
+			t.Fatalf("%v: canceled request did not fail open", client)
+		}
+		data = runInput(t, context.Background(), hookEvent(t, unbound), args...)
+		if len(data) != 0 {
+			t.Fatalf("%v: unbound projects should be a quiet no-op: %s", client, data)
+		}
 	}
 }
 
@@ -320,6 +315,9 @@ func sessionStartWithBackups(t *testing.T, runner *backup.Runner, db *store.Stor
 	t.Setenv("HERMA_TOKEN", "test-token")
 	p, _, err := db.Create(context.Background(), store.Author{Name: "worker", Role: store.RoleAgent}, "", store.CreateInput{Kind: "project", Title: "Backed up"})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := db.Create(context.Background(), store.Author{Name: "worker", Role: store.RoleAgent}, "", store.CreateInput{Kind: "note", Title: "Handoff", ProjectID: p.ID}); err != nil {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
