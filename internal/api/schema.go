@@ -38,7 +38,7 @@ func schemaDocument(kinds []store.Kind) map[string]any {
 			{"method": "PATCH", "path": "/v1/records/{id}", "purpose": "update supplied fields at expected version; 409 for stale edits"},
 			{"method": "GET", "path": "/v1/records/{id}/history", "purpose": "complete snapshots ordered by version"},
 			{"method": "GET", "path": "/v1/context?project_id={id}", "purpose": "bounded session coordination and handoffs: project, unfinished task intentions, unresolved feedback and recent notes; accepted principles always; knowledge requires include_durable=true"},
-			{"method": "GET", "path": "/v1/principles?project_id={id}", "purpose": "accepted project and global principles rendered as the Claude Code rules file .claude/rules/herma/principles.md (text/markdown); empty when none apply"},
+			{"method": "GET", "path": "/v1/principles[?project_id={id}]", "purpose": "accepted principles as markdown (text/markdown): without project_id the global principles, with it only that project's; empty when none apply"},
 			{"method": "GET", "path": "/v1/recall?q={words}", "purpose": "relevance-ranked accepted knowledge and principles (plus proposed with include_proposed=true); project_id limits to that project and global records; limit 1–100 (default 20); max_bytes 2048–65536 (default 8192) bounds the complete response"},
 			{"method": "GET", "path": "/v1/export", "purpose": "all records and revisions including archived records; excludes credentials and replay receipts; 413 above 16 MiB, 503 if preparation times out"},
 		},

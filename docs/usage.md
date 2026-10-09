@@ -301,7 +301,8 @@ principles apply everywhere; a project's principles apply in its bound checkouts
 
 `herma principles` prints the global accepted principles as markdown, and
 `herma principles --project ID` prints only that project's. The API serves the
-same text at `GET /v1/principles` and `GET /v1/principles?project_id=ID`. Tools
+same text at `GET /v1/principles` and `GET /v1/principles?project_id=ID`; both
+are empty when no principles apply. Tools
 without a hook can fetch them this way.
 
 The session hook keeps them in each client's standing instructions:
@@ -327,7 +328,8 @@ The block is delimited by these two lines:
 
 herma rewrites only what is between them, and text outside the markers is never
 changed. If the markers are unpaired or repeated, herma leaves the file alone and
-warns; fix the file by hand. Do not edit generated files; change principles in
+warns in sessions started in a bound checkout; fix the file by hand. Sessions in
+unbound folders stay silent and leave the old block as it is. Do not edit generated files; change principles in
 herma and the next session start updates them.
 
 ## Recall

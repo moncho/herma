@@ -95,7 +95,10 @@ herma project bind --project PROJECT_ID
 ```
 
 New sessions then start with your principles in any folder, and with the
-repository's as well in a bound one. [Setting up herma](docs/setup.md) covers
+repository's as well in a bound one. To tell Claude and Codex apart in herma's
+history, install each client with its own agent identity instead, for example
+`herma --identity <claude-identity> hook install --client claude` and
+`herma --identity <codex-identity> hook install --client codex`. [Setting up herma](docs/setup.md) covers
 the details, including Codex hook trust.
 
 ## Documentation

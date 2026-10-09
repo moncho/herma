@@ -245,11 +245,16 @@ func TestHookInstallIsUserLevelAndRemovesProjectHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkout := t.TempDir()
-	if _, err := hooks.Install(checkout, "both", func(string) (string, error) { return "'/bin/herma' hook session-start", nil }); err != nil {
+	writeOldProjectHooks(t, checkout)
+	out, err := runCLI(t, "--credentials", credentials, "--identity", "session-a", "hook", "install", "--client", "both", "--dir", checkout)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runCLI(t, "--credentials", credentials, "--identity", "session-a", "hook", "install", "--client", "both", "--dir", checkout); err != nil {
-		t.Fatal(err)
+	var result struct {
+		Removed []hooks.Installation `json:"removed"`
+	}
+	if err := json.Unmarshal(out, &result); err != nil || len(result.Removed) != 2 || !result.Removed[0].Changed || !result.Removed[1].Changed {
+		t.Fatalf("removed = %+v (%v): %s", result.Removed, err, out)
 	}
 	home := os.Getenv("HOME")
 	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); err != nil {
@@ -263,6 +268,64 @@ func TestHookInstallIsUserLevelAndRemovesProjectHooks(t *testing.T) {
 		if strings.Contains(string(data), "herma-managed:session-start") {
 			t.Fatalf("project hook left behind in %s: %s", relative, data)
 		}
+	}
+}
+
+// writeOldProjectHooks writes the project-level SessionStart entries that
+// earlier herma releases installed, next to an unrelated setting.
+func writeOldProjectHooks(t *testing.T, checkout string) {
+	t.Helper()
+	entry := `{"theme":"dark","hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"'/bin/herma' hook session-start # herma-managed:session-start:v2","timeout":6,"async":false}]}]}}`
+	for _, relative := range []string{".claude/settings.local.json", ".codex/hooks.json"} {
+		path := filepath.Join(checkout, relative)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(entry), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestHookInstallOmitsRemovedWhenNoProjectHookChanged(t *testing.T) {
+	cleanEnv(t)
+	credentials := filepath.Join(t.TempDir(), "credentials.json")
+	if err := os.WriteFile(credentials, []byte(`{"session-a":{"token":"agent-token-that-is-long-enough-for-herma","role":"agent"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runCLI(t, "--credentials", credentials, "--identity", "session-a", "hook", "install", "--client", "both", "--dir", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), `"removed"`) {
+		t.Fatalf("removed reported with nothing removed: %s", out)
+	}
+}
+
+func TestHookInstallWarnsWhenProjectHookRemovalFails(t *testing.T) {
+	cleanEnv(t)
+	credentials := filepath.Join(t.TempDir(), "credentials.json")
+	if err := os.WriteFile(credentials, []byte(`{"session-a":{"token":"agent-token-that-is-long-enough-for-herma","role":"agent"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	checkout := t.TempDir()
+	if err := os.Symlink(t.TempDir(), filepath.Join(checkout, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runCLI(t, "--credentials", credentials, "--identity", "session-a", "hook", "install", "--client", "both", "--dir", checkout)
+	if err != nil {
+		t.Fatalf("install failed after the user hook was written: %v", err)
+	}
+	var result struct {
+		Installed []hooks.Installation `json:"installed"`
+		Warning   string               `json:"remove_warning"`
+		Plugin    any                  `json:"plugin"`
+	}
+	if err := json.Unmarshal(out, &result); err != nil || len(result.Installed) != 2 || !strings.Contains(result.Warning, ".claude") || result.Plugin == nil {
+		t.Fatalf("result = %+v (%v): %s", result, err, out)
+	}
+	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".claude", "settings.json")); err != nil {
+		t.Fatal(err)
 	}
 }
 
