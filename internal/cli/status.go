@@ -32,7 +32,8 @@ type statusBackup struct {
 
 // statusCommand answers in one call what a status line shows: the binding,
 // the identity, what awaits review and how old the last backup is. Outside a
-// bound checkout it reports {"bound": false} without contacting the server.
+// bound checkout it reports the same fields with "bound": false and no
+// project_id.
 func statusCommand(ctx context.Context, cfg config, args []string, stdout, stderr io.Writer) error {
 	if err := noOptions("status", args, stderr); err != nil {
 		return err
@@ -42,10 +43,8 @@ func statusCommand(ctx context.Context, cfg config, args []string, stdout, stder
 		return err
 	}
 	binding, _, err := project.Discover(cwd)
-	if errors.Is(err, project.ErrNoBinding) {
-		return output(stdout, map[string]bool{"bound": false})
-	}
-	if err != nil {
+	bound := err == nil
+	if err != nil && !errors.Is(err, project.ErrNoBinding) {
 		return err
 	}
 	c, err := cfg.client()
@@ -95,10 +94,14 @@ func statusCommand(ctx context.Context, cfg config, args []string, stdout, stder
 		age := int64(time.Since(at).Seconds())
 		b.LastSuccessAt, b.AgeSeconds = &at, &age
 	}
-	return output(stdout, map[string]any{
-		"bound": true, "project_id": binding.ProjectID, "server": "ok",
+	result := map[string]any{
+		"bound": bound, "server": "ok",
 		"identity": who.Identity, "role": who.Role, "review": review, "backup": b,
-	})
+	}
+	if bound {
+		result["project_id"] = binding.ProjectID
+	}
+	return output(stdout, result)
 }
 
 func getJSON(ctx context.Context, c *client.Client, path string, query url.Values, into any) error {

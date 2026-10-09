@@ -65,14 +65,25 @@ test('bound session shows status and serves recall', { options }, async ($: any,
   for (const run of runs) expect(run.env).toEqual(cleared)
 })
 
-test('unbound session registers no tools and shows nothing', { options }, async ($: any, on: any) => {
+test('unbound session with a server registers no tools but shows the status', { options }, async ($: any, on: any) => {
+  const calls: string[][] = []
+  const registered: string[] = []
+  const statuses: Array<string | undefined> = []
+  fakeHerma(on, { status: { exitCode: 0, stdout: JSON.stringify({ bound: false, server: 'ok', identity: 'claude-agent', role: 'agent', review: { total: 1 }, backup: { enabled: false } }) } }, calls)
+  engine(on, { statuses, registered })
+  await $.session.start(start)
+  expect(calls.map(c => sub(c))).toContain('status')
+  expect(registered).toEqual([])
+  expect(statuses.at(-1)).toBe('herma ✓ · 1 to review · backup off')
+})
+
+test('a bare unbound status from older herma registers no tools and shows nothing', { options }, async ($: any, on: any) => {
   const calls: string[][] = []
   const registered: string[] = []
   const statuses: Array<string | undefined> = []
   fakeHerma(on, { status: { exitCode: 0, stdout: '{"bound": false}' } }, calls)
   engine(on, { statuses, registered })
   await $.session.start(start)
-  expect(calls.map(c => sub(c))).toContain('status')
   expect(registered).toEqual([])
   expect(statuses.at(-1)).toBe(undefined)
 })

@@ -111,7 +111,7 @@ export const register: Register = (on, options) => {
       return started
     }
     const status = await refresh($, state, FIRST_TIMEOUT_MS)
-    // Outside a bound checkout the plugin stays silent for the session.
+    // Only older herma, which cannot report a server outside a checkout, leaves the plugin silent.
     if (status.kind !== 'unbound') keepFresh($, state)
     if (isUsable(status)) {
       await $.tool.register(RECALL_TOOL)
