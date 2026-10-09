@@ -4,6 +4,9 @@ import { firstLine, parseStatus, statusText, transition, isUsable, type HermaSta
 const okJSON = (review: number, backup: object) =>
   JSON.stringify({ bound: true, project_id: 'rec_x', server: 'ok', identity: 'local-agent', role: 'agent', review: { total: review }, backup })
 
+const unboundJSON = (review: number) =>
+  JSON.stringify({ bound: false, server: 'ok', identity: 'claude-agent', role: 'agent', review: { total: review }, backup: { enabled: false } })
+
 const run = (stdout: string, exitCode = 0, stderr = '') => ({ exitCode, stdout, stderr })
 
 describe('statusText', () => {
@@ -61,5 +64,24 @@ describe('transition', () => {
   })
   test('recovery is silent', () => {
     expect(transition(failed, healthy)).toBe(undefined)
+  })
+})
+
+test('unbound with a server shows a status line but is not usable for tools', () => {
+  const s = parseStatus(run(unboundJSON(1)))
+  expect(statusText(s)).toBe('herma ✓ · 1 to review · backup off')
+  expect(isUsable(s)).toBe(false)
+})
+
+describe('review toast', () => {
+  const at = (n: number) => parseStatus(run(okJSON(n, { enabled: false })))
+  test('increase toasts with the difference', () => {
+    expect(transition(at(0), at(1))).toBe('herma: 1 new proposal to review')
+    expect(transition(at(1), at(3))).toBe('herma: 2 new proposals to review')
+  })
+  test('first reading, steady and decrease are silent', () => {
+    expect(transition(undefined, at(2))).toBe(undefined)
+    expect(transition(at(2), at(2))).toBe(undefined)
+    expect(transition(at(2), at(1))).toBe(undefined)
   })
 })

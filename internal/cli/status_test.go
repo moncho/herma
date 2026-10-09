@@ -71,12 +71,27 @@ func rawBackup(t *testing.T) map[string]json.RawMessage {
 	return raw.Backup
 }
 
-func TestStatusUnboundNeedsNoServer(t *testing.T) {
+func TestStatusOutsideABindingStillReportsTheServer(t *testing.T) {
+	startServe(t)
+	t.Chdir(t.TempDir())
+	data, err := runCLI(t, "status")
+	if err != nil {
+		t.Fatalf("%v: %s", err, data)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["bound"] != false || got["server"] != "ok" || got["review"] == nil || got["backup"] == nil || got["project_id"] != nil {
+		t.Fatalf("status %v", got)
+	}
+}
+
+func TestStatusOutsideABindingFailsWhenServerIsDown(t *testing.T) {
 	cleanEnv(t)
 	t.Chdir(t.TempDir())
-	data, err := runCLI(t, "--url", "http://127.0.0.1:1", "status")
-	if err != nil || string(data) != "{\n  \"bound\": false\n}\n" {
-		t.Fatalf("%q %v", data, err)
+	if _, err := runCLI(t, "--url", "http://127.0.0.1:1", "status"); err == nil {
+		t.Fatal("status succeeded against a closed port")
 	}
 }
 

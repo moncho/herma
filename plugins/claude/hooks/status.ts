@@ -5,7 +5,7 @@ export type Backup = { enabled: false } | { enabled: true; ageSeconds?: number; 
 export type HermaStatus =
   | { kind: 'unbound' }
   | { kind: 'failed'; reason: string }
-  | { kind: 'ok'; role: string; review: number; backup: Backup }
+  | { kind: 'ok'; bound: boolean; role: string; review: number; backup: Backup }
 
 type Run = { exitCode: number; stdout: string; stderr: string }
 
@@ -27,8 +27,9 @@ export function parseStatus(r: Run): HermaStatus {
     return { kind: 'failed', reason: 'unreadable herma status output' }
   }
   if (typeof doc !== 'object' || doc === null) return { kind: 'failed', reason: 'unreadable herma status output' }
-  if (doc.bound === false) return { kind: 'unbound' }
-  if (doc.bound !== true) return { kind: 'failed', reason: 'unreadable herma status output' }
+  // A bare {"bound": false} comes from older herma, which says nothing more.
+  if (doc.bound === false && typeof doc.role !== 'string') return { kind: 'unbound' }
+  if (typeof doc.bound !== 'boolean') return { kind: 'failed', reason: 'unreadable herma status output' }
   const review = doc.review as { total?: unknown } | undefined
   const b = (doc.backup ?? {}) as { enabled?: unknown; age_seconds?: unknown; stale?: unknown }
   const backup: Backup = b.enabled === true
@@ -36,6 +37,7 @@ export function parseStatus(r: Run): HermaStatus {
     : { enabled: false }
   return {
     kind: 'ok',
+    bound: doc.bound === true,
     role: typeof doc.role === 'string' ? doc.role : '',
     review: typeof review?.total === 'number' ? review.total : 0,
     backup,
@@ -43,7 +45,7 @@ export function parseStatus(r: Run): HermaStatus {
 }
 
 export function isUsable(s: HermaStatus): boolean {
-  return s.kind === 'ok' && s.role === 'agent'
+  return s.kind === 'ok' && s.bound && s.role === 'agent'
 }
 
 function age(seconds: number): string {
@@ -74,9 +76,13 @@ function stale(s: HermaStatus | undefined): boolean {
 }
 
 // transition names a toast for a change into a bad state: healthy to failed,
-// or fresh to stale. A first reading never toasts.
+// fresh to stale, or more proposals to review. A first reading never toasts.
 export function transition(prev: HermaStatus | undefined, next: HermaStatus): string | undefined {
   if (next.kind === 'failed' && healthy(prev)) return `herma unreachable: ${next.reason}`
   if (stale(next) && healthy(prev) && !stale(prev)) return 'herma backup is stale'
+  if (next.kind === 'ok' && prev?.kind === 'ok' && next.review > prev.review) {
+    const n = next.review - prev.review
+    return `herma: ${n} new proposal${n === 1 ? '' : 's'} to review`
+  }
   return undefined
 }
