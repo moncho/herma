@@ -83,20 +83,6 @@ func TestTextContextOmitsPrinciplesOnRequest(t *testing.T) {
 	}
 }
 
-func TestTextContextAnnouncesChangedPrinciples(t *testing.T) {
-	h, s := apiTestHandler(t, nil)
-	project := createContextRecord(t, s, store.CreateInput{Kind: "project", Title: "Changed"})
-	none := requestTextContext(t, h, project.ID, "&principles=changed", defaultContextBytes)
-	if !strings.Contains(none, "\n## Principles changed\n"+principlesNoneNote+"\n") {
-		t.Fatalf("no-principles note missing:\n%s", none)
-	}
-	createContextRecord(t, s, store.CreateInput{Kind: "principle", Title: "New rule", Status: "accepted", Sources: []string{"https://example.com/review"}, ProjectID: project.ID})
-	text := requestTextContext(t, h, project.ID, "&principles=changed", defaultContextBytes)
-	if !strings.Contains(text, "\n## Principles changed\n"+principlesChangedNote+"\n") || !strings.Contains(text, "\n    New rule\n") || strings.Contains(text, "\n## Principles\n") {
-		t.Fatalf("changed principles missing:\n%s", text)
-	}
-}
-
 func TestTextContextReportsOmittedAndClippedRecords(t *testing.T) {
 	h, s := apiTestHandler(t, nil)
 	project := createContextRecord(t, s, store.CreateInput{Kind: "project", Title: "Busy"})
@@ -178,7 +164,7 @@ func TestTextRecordTextCannotStartASectionAfterOtherLineBreaks(t *testing.T) {
 func TestContextFormatAndPrinciplesParametersAreValidated(t *testing.T) {
 	h, s := apiTestHandler(t, nil)
 	project := createContextRecord(t, s, store.CreateInput{Kind: "project", Title: "Params"})
-	for _, query := range []string{"&format=xml", "&principles=all"} {
+	for _, query := range []string{"&format=xml", "&principles=all", "&principles=changed", "&principles=replace"} {
 		response := apiTestRequest(h, http.MethodGet, "/v1/context?project_id="+project.ID+query, "", "", "Bearer "+apiTestToken, "")
 		assertAPIError(t, response, http.StatusBadRequest)
 	}
@@ -221,72 +207,6 @@ func TestTextContextFillsItsBudgetByClippingRecords(t *testing.T) {
 		}
 		if !strings.Contains(text, "\n- "+newest.ID+" ") {
 			t.Errorf("budget %d: newest note %s missing:\n%s", budget, newest.ID, text)
-		}
-	}
-}
-
-func TestTextContextSaysWhenOnlySomeChangedPrinciplesFit(t *testing.T) {
-	h, s := apiTestHandler(t, nil)
-	project := createContextRecord(t, s, store.CreateInput{Kind: "project", Title: "Partial"})
-	for i := 0; i < 20; i++ {
-		createContextRecord(t, s, store.CreateInput{Kind: "principle", Title: fmt.Sprintf("Rule %02d", i), Body: strings.Repeat("rule ", 80), Status: "accepted", Sources: []string{"https://example.com/review"}, ProjectID: project.ID})
-	}
-	text := requestTextContext(t, h, project.ID, "&principles=changed&max_bytes=4096", 4096)
-	if !strings.Contains(text, "\n## Principles changed\n"+principlesPartialNote+"\n") || strings.Contains(text, principlesChangedNote) {
-		t.Fatalf("partial principles note missing:\n%s", text)
-	}
-	if !regexp.MustCompile(`Omitted: principles \d+`).MatchString(text) {
-		t.Fatalf("omitted principles not reported:\n%s", text)
-	}
-}
-
-func TestTextContextReplacesAnUnwritableRulesFile(t *testing.T) {
-	h, s := apiTestHandler(t, nil)
-	project := createContextRecord(t, s, store.CreateInput{Kind: "project", Title: "Replace"})
-	none := requestTextContext(t, h, project.ID, "&principles=replace", defaultContextBytes)
-	if !strings.Contains(none, "\n## Principles replacing the rules file\n"+principlesReplaceNoneNote+"\n") {
-		t.Fatalf("no-principles replace note missing:\n%s", none)
-	}
-	createContextRecord(t, s, store.CreateInput{Kind: "principle", Title: "New rule", Status: "accepted", Sources: []string{"https://example.com/review"}, ProjectID: project.ID})
-	text := requestTextContext(t, h, project.ID, "&principles=replace", defaultContextBytes)
-	if !strings.Contains(text, "\n## Principles replacing the rules file\n"+principlesReplaceNote+"\n") || !strings.Contains(text, "\n    New rule\n") || strings.Contains(text, "\n## Principles\n") {
-		t.Fatalf("replacing principles missing:\n%s", text)
-	}
-}
-
-func TestTextContextSaysWhenOnlySomeReplacingPrinciplesFit(t *testing.T) {
-	h, s := apiTestHandler(t, nil)
-	project := createContextRecord(t, s, store.CreateInput{Kind: "project", Title: "Partial replace"})
-	for i := 0; i < 20; i++ {
-		createContextRecord(t, s, store.CreateInput{Kind: "principle", Title: fmt.Sprintf("Rule %02d", i), Body: strings.Repeat("rule ", 80), Status: "accepted", Sources: []string{"https://example.com/review"}, ProjectID: project.ID})
-	}
-	text := requestTextContext(t, h, project.ID, "&principles=replace&max_bytes=4096", 4096)
-	if !strings.Contains(text, "\n## Principles replacing the rules file\n"+principlesReplacePartialNote+"\n") || strings.Contains(text, principlesReplaceNote) {
-		t.Fatalf("partial replace note missing:\n%s", text)
-	}
-	if !regexp.MustCompile(`Omitted: principles \d+`).MatchString(text) {
-		t.Fatalf("omitted principles not reported:\n%s", text)
-	}
-}
-
-func TestTextContextSaysWhenTheLastPrincipleIsClipped(t *testing.T) {
-	h, s := apiTestHandler(t, nil)
-	project := createContextRecord(t, s, store.CreateInput{Kind: "project", Title: "Clipped principle"})
-	for i := 0; i < 4; i++ {
-		createContextRecord(t, s, store.CreateInput{Kind: "principle", Title: fmt.Sprintf("Rule %02d", i), Body: strings.Repeat("rule text ", 140), Status: "accepted", Sources: []string{"https://example.com/review"}, ProjectID: project.ID})
-	}
-	for _, tc := range []struct{ label, partial, all string }{
-		{"changed", principlesPartialNote, principlesChangedNote},
-		{"replace", principlesReplacePartialNote, principlesReplaceNote},
-	} {
-		text := requestTextContext(t, h, project.ID, "&principles="+tc.label, defaultContextBytes)
-		// The fixture must show every principle with only the last one clipped.
-		shown := regexp.MustCompile(`(?m)^- (rec_[0-9a-f]+) `).FindAllStringSubmatch(text, -1)
-		if len(shown) != 4 || strings.Contains(text, "Omitted:") || !strings.Contains(text, "\nClipped: "+shown[3][1]+" body. ") {
-			t.Fatalf("%s: fixture does not clip exactly the last principle:\n%s", tc.label, text)
-		}
-		if !strings.Contains(text, tc.partial+"\n") || strings.Contains(text, tc.all) {
-			t.Fatalf("%s: clipped principles presented as the complete set:\n%s", tc.label, text)
 		}
 	}
 }

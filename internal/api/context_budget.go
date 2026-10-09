@@ -58,10 +58,6 @@ type projectContext struct {
 	MaxBytes       int       `json:"max_bytes"`
 	IncludeDurable bool      `json:"include_durable"`
 	Truncated      bool      `json:"truncated"`
-	// PrinciplesLabel is "changed" when principles replace the rules file a
-	// Claude session already loaded, or "replace" when herma could not update that
-	// file. Only the text format shows it.
-	PrinciplesLabel string `json:"-"`
 }
 
 func (c projectContext) anyOmitted() bool {
@@ -94,10 +90,9 @@ func (jsonFormat) projectSize(r contextRecord) int         { return contextRecor
 func (jsonFormat) contentType() string                     { return "application/json; charset=utf-8" }
 
 type contextOptions struct {
-	budget          int
-	includeDurable  bool
-	format          contextFormat
-	principlesLabel string
+	budget         int
+	includeDurable bool
+	format         contextFormat
 }
 
 // packContext counts the actual wire representation, including JSON escaping,
@@ -119,7 +114,7 @@ func packContext(snapshot contextSnapshot, opts contextOptions) ([]byte, error) 
 		Kinds: shownKinds, KindsMore: len(snapshot.Kinds) - len(shownKinds),
 		Principles: []contextRecord{}, PrinciplesOmitted: snapshot.PrinciplesTotal,
 		Sections: make([]contextSection, 0, len(snapshot.Sections)),
-		MaxBytes: budget, IncludeDurable: includeDurable, PrinciplesLabel: opts.principlesLabel,
+		MaxBytes: budget, IncludeDurable: includeDurable,
 	}
 	// Built-in sections are always listed. A custom section is listed only once
 	// one of its records is placed, so the packet's fixed part stays small

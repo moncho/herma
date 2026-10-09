@@ -81,8 +81,8 @@ func (h *Handler) projectContext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	principles := q.Get("principles")
-	if principles != "" && principles != "include" && principles != "omit" && principles != "changed" && principles != "replace" {
-		badRequest(w, errors.New("principles must be include, omit, changed or replace"))
+	if principles != "" && principles != "include" && principles != "omit" {
+		badRequest(w, errors.New("principles must be include or omit"))
 		return
 	}
 	snapshot, err := h.projectSnapshot(r.Context(), q.Get("project_id"), includeDurable)
@@ -93,7 +93,7 @@ func (h *Handler) projectContext(w http.ResponseWriter, r *http.Request) {
 	if principles == "omit" {
 		snapshot.Principles, snapshot.PrinciplesTotal = nil, 0
 	}
-	data, err := packContext(snapshot, contextOptions{budget: budget, includeDurable: includeDurable, format: format, principlesLabel: principlesLabel(principles)})
+	data, err := packContext(snapshot, contextOptions{budget: budget, includeDurable: includeDurable, format: format})
 	if err != nil {
 		storeError(w, err)
 		return
@@ -191,13 +191,4 @@ func contextRecordLess(a, b store.Record, recentFirst bool) bool {
 		return a.UpdatedAt.After(b.UpdatedAt)
 	}
 	return a.ID < b.ID
-}
-
-// principlesLabel maps the principles query mode to the text section label;
-// include and omit render principles under the plain heading.
-func principlesLabel(mode string) string {
-	if mode == "changed" || mode == "replace" {
-		return mode
-	}
-	return ""
 }

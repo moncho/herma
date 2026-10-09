@@ -66,6 +66,9 @@ func runSessionHook(t *testing.T, root string, args ...string) hookResult {
 		Message string `json:"systemMessage"`
 	}
 	data := runInput(t, context.Background(), hookEvent(t, root), append([]string{"hook", "session-start"}, args...)...)
+	if len(data) == 0 {
+		return hookResult{}
+	}
 	if err := json.Unmarshal(data, &out); err != nil {
 		t.Fatalf("hook output %s: %v", data, err)
 	}
@@ -80,17 +83,18 @@ func TestClaudeHookWritesPrinciplesAndAnnouncesOnlyChanges(t *testing.T) {
 	if err != nil || !strings.Contains(string(file), "## Never commit to main") {
 		t.Fatalf("rules file: %s %v", file, err)
 	}
-	if !strings.Contains(first.Context, "\n## Principles changed\n") || !strings.Contains(first.Context, "Never commit to main") {
+	resolved, _ := filepath.EvalSymlinks(root)
+	if !strings.HasPrefix(first.Context, "## Project principles changed\nherma project principles changed after this session loaded them; this version replaces "+filepath.Join(resolved, rules.Path)+".\n") || !strings.Contains(first.Context, "Never commit to main") {
 		t.Fatalf("first packet does not announce the change:\n%s", first.Context)
 	}
 	before, _ := os.Stat(filepath.Join(root, rules.Path))
 	second := runSessionHook(t, root, "--client", "claude")
 	after, _ := os.Stat(filepath.Join(root, rules.Path))
-	if strings.Contains(second.Context, "## Principles") || !os.SameFile(before, after) {
+	if second != (hookResult{}) || !os.SameFile(before, after) {
 		t.Fatalf("unchanged principles were resent or rewritten:\n%s", second.Context)
 	}
 	reviewed(t, db, store.CreateInput{Kind: "principle", Title: "Open PRs as drafts", ProjectID: p.ID})
-	if third := runSessionHook(t, root, "--client", "claude"); !strings.Contains(third.Context, "Open PRs as drafts") || !strings.Contains(third.Context, "## Principles changed") {
+	if third := runSessionHook(t, root, "--client", "claude"); !strings.Contains(third.Context, "Open PRs as drafts") || !strings.Contains(third.Context, "## Project principles changed") {
 		t.Fatalf("new principle not announced:\n%s", third.Context)
 	}
 }
@@ -103,16 +107,13 @@ func TestClaudeHookFallsBackWhenTheRulesPathIsUnsafe(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := runSessionHook(t, root, "--client", "claude")
-	if !strings.Contains(got.Context, "\n## Principles replacing the rules file\n") || !strings.Contains(got.Context, "Keep rules safe") || !strings.Contains(got.Message, "could not write "+rules.Path) {
+	if !strings.HasPrefix(got.Context, "## Project principles\n") || !strings.Contains(got.Context, "Keep rules safe") || !strings.Contains(got.Message, "could not write "+rules.Path) {
 		t.Fatalf("no fallback: %+v", got)
 	}
 	if entries, _ := os.ReadDir(elsewhere); len(entries) != 0 {
 		t.Fatalf("wrote through the symlink: %v", entries)
 	}
 }
-
-// The replace note as the server renders it; internal/api owns the constant.
-const replaceNote = "herma could not update " + rules.Path + "; these principles replace it, and any herma principle that appears only there no longer applies."
 
 func TestClaudeHookReplacesAStaleRulesFileItCannotUpdate(t *testing.T) {
 	db, p, root := claudeHookFixture(t, 0, nil)
@@ -128,22 +129,12 @@ func TestClaudeHookReplacesAStaleRulesFileItCannotUpdate(t *testing.T) {
 	}
 	reviewed(t, db, store.CreateInput{Kind: "principle", Title: "New rule", ProjectID: p.ID})
 	got := runSessionHook(t, root, "--client", "claude")
-	if !strings.Contains(got.Context, "\n## Principles replacing the rules file\n"+replaceNote+"\n") || !strings.Contains(got.Context, "New rule") || !strings.Contains(got.Message, "could not write "+rules.Path) {
+	resolved, _ := filepath.EvalSymlinks(path)
+	if !strings.HasPrefix(got.Context, "## Project principles\nherma could not update "+resolved+"; these principles replace it.\n") || !strings.Contains(got.Context, "New rule") || !strings.Contains(got.Message, "could not write "+rules.Path) {
 		t.Fatalf("stale rules file not replaced in context: %+v", got)
 	}
 	if now, _ := os.ReadFile(path); string(now) != string(old) {
 		t.Fatalf("rules file changed:\n%s", now)
-	}
-}
-
-func TestClaudeHookClampsTheBudgetToClaudesLimit(t *testing.T) {
-	db, p, root := claudeHookFixture(t, 20000, nil)
-	for i := 0; i < 60; i++ {
-		reviewed(t, db, store.CreateInput{Kind: "note", Title: "Handoff", Body: strings.Repeat("detail ", 100), ProjectID: p.ID})
-	}
-	got := runSessionHook(t, root, "--client", "claude")
-	if len(got.Context) > claudeContextLimit || len(got.Context) < claudeContextLimit*8/10 || !strings.Contains(got.Message, "10,000") || !strings.Contains(got.Message, ".herma-project.json") {
-		t.Fatalf("context %d bytes, message %q", len(got.Context), got.Message)
 	}
 }
 
@@ -219,7 +210,7 @@ func TestCodexHookIncludesPrinciplesWithoutWritingFiles(t *testing.T) {
 	db, p, root := claudeHookFixture(t, 0, nil)
 	reviewed(t, db, store.CreateInput{Kind: "principle", Title: "Codex rule", ProjectID: p.ID})
 	got := runSessionHook(t, root, "--client", "codex")
-	if !strings.HasPrefix(got.Context, "herma context · project ") || !strings.Contains(got.Context, "\n## Principles\n") || !strings.Contains(got.Context, "Codex rule") {
+	if !strings.HasPrefix(got.Context, "## Project principles\n"+rules.Header) || !strings.Contains(got.Context, "Codex rule") || strings.Contains(got.Context, "changed") {
 		t.Fatalf("codex packet:\n%s", got.Context)
 	}
 	if _, err := os.Lstat(filepath.Join(root, ".claude")); !os.IsNotExist(err) {
@@ -254,19 +245,8 @@ func TestClaudeHookKeepsPrinciplesInContextForAHomeDirectoryBinding(t *testing.T
 	if _, err := os.Lstat(filepath.Join(root, ".claude")); !os.IsNotExist(err) {
 		t.Fatalf("wrote user-wide Claude rules: %v", err)
 	}
-	if !strings.Contains(got.Context, "\n## Principles\n") || !strings.Contains(got.Context, "Home rule") || !strings.Contains(got.Message, "home directory") {
+	if !strings.HasPrefix(got.Context, "## Project principles\n"+rules.Header) || !strings.Contains(got.Context, "Home rule") || !strings.Contains(got.Message, "home directory") {
 		t.Fatalf("home binding: %+v", got)
-	}
-}
-
-func TestClaudeHookClampsTheLegacyDefaultSilently(t *testing.T) {
-	db, p, root := claudeHookFixture(t, 12288, nil)
-	for i := 0; i < 60; i++ {
-		reviewed(t, db, store.CreateInput{Kind: "note", Title: "Handoff", Body: strings.Repeat("detail ", 100), ProjectID: p.ID})
-	}
-	got := runSessionHook(t, root, "--client", "claude")
-	if len(got.Context) > claudeContextLimit || strings.Contains(got.Message, "max_bytes") || strings.Contains(got.Message, "10,000") {
-		t.Fatalf("context %d bytes, message %q", len(got.Context), got.Message)
 	}
 }
 

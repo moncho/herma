@@ -108,7 +108,7 @@ type contextRequest struct {
 	Budget     int
 	Durable    bool
 	Format     string // "text" or "json"
-	Principles string // "include", "omit" or "changed"
+	Principles string // "include" or "omit"
 }
 
 // Keep context compact on stdout as well as over HTTP. Indentation would add

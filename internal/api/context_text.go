@@ -7,26 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-
-	"github.com/moncho/herma/internal/rules"
 )
-
-const (
-	principlesChangedNote = "herma principles changed after this session loaded them; this version replaces " + rules.Path + "."
-	principlesNoneNote    = "No herma principles apply now; disregard the herma principles loaded earlier from " + rules.Path + "."
-	principlesPartialNote = "herma principles changed after this session loaded them; only some fit here. The full updated set is in " + rules.Path + "; read it before relying on principles not listed here."
-
-	principlesReplaceNote        = "herma could not update " + rules.Path + "; these principles replace it, and any herma principle that appears only there no longer applies."
-	principlesReplacePartialNote = "herma could not update " + rules.Path + " and only some current principles fit here; they replace that file. Run herma recall before relying on a herma principle not listed here."
-	principlesReplaceNoneNote    = "herma could not update " + rules.Path + "; no herma principles apply now, so disregard the ones loaded from it."
-)
-
-// principlesLabels holds the heading and notes for principles that stand in
-// for the rules file, keyed by contextOptions.principlesLabel.
-var principlesLabels = map[string]struct{ heading, all, partial, none string }{
-	"changed": {"Principles changed", principlesChangedNote, principlesPartialNote, principlesNoneNote},
-	"replace": {"Principles replacing the rules file", principlesReplaceNote, principlesReplacePartialNote, principlesReplaceNoneNote},
-}
 
 // textFormat is the compact rendering sessions read. Record text is indented
 // under its header line, so no stored title or body can start a section.
@@ -57,27 +38,7 @@ func (textFormat) encode(c projectContext) ([]byte, error) {
 	if line := kindsLine(c.Kinds, c.KindsMore); line != "" {
 		b.WriteString(line + "\n")
 	}
-	if notes, ok := principlesLabels[c.PrinciplesLabel]; ok {
-		b.WriteString("\n## " + notes.heading + "\n")
-		// A clipped principle is not the complete set either.
-		partial := c.PrinciplesOmitted > 0
-		for _, r := range c.Principles {
-			partial = partial || recordClipped(r)
-		}
-		switch {
-		case len(c.Principles) == 0 && c.PrinciplesOmitted == 0:
-			b.WriteString(notes.none + "\n")
-		case partial:
-			b.WriteString(notes.partial + "\n")
-		default:
-			b.WriteString(notes.all + "\n")
-		}
-		for _, r := range c.Principles {
-			writeTextRecord(&b, r)
-		}
-	} else {
-		writeTextSection(&b, "Principles", c.Principles)
-	}
+	writeTextSection(&b, "Principles", c.Principles)
 	for _, s := range c.Sections {
 		writeTextSection(&b, s.Heading, s.Records)
 	}
