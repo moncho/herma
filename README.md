@@ -1,6 +1,6 @@
 # herma
 
-A shared memory that makes every AI agent you use work the way you expect.
+A shared, reviewed ethos for your agents.
 
 Agents forget you between sessions, and each tool and each project learns your
 preferences separately, if at all. herma keeps one memory for all of them: the
