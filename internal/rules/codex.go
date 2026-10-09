@@ -20,7 +20,7 @@ const (
 
 // ErrMalformedBlock reports herma markers that are unpaired, repeated or out
 // of order; the file is left for the user to fix.
-var ErrMalformedBlock = errors.New("herma block markers in AGENTS.md are malformed")
+var ErrMalformedBlock = errors.New("herma block markers in AGENTS.md are malformed: keep exactly one start and one end marker, each on its own line")
 
 // CodexHome returns $CODEX_HOME, or ~/.codex.
 func CodexHome() (string, error) {
@@ -82,25 +82,45 @@ func readCodexFile(root *os.Root) ([]byte, fs.FileMode, error) {
 	return data, info.Mode().Perm(), err
 }
 
+// markerLines returns the [start, end) byte spans of the lines holding marker:
+// the marker at the start of a line, followed by optional spaces or tabs and an
+// optional "\r", then a newline or the end of the file. end includes the newline.
+func markerLines(data []byte, marker string) [][2]int {
+	var spans [][2]int
+	for pos := 0; pos < len(data); {
+		end := len(data)
+		if nl := bytes.IndexByte(data[pos:], '\n'); nl >= 0 {
+			end = pos + nl + 1
+		}
+		line := bytes.TrimSuffix(data[pos:end], []byte("\n"))
+		line = bytes.TrimSuffix(line, []byte("\r"))
+		line = bytes.TrimRight(line, " \t")
+		if string(line) == marker {
+			spans = append(spans, [2]int{pos, end})
+		}
+		pos = end
+	}
+	return spans
+}
+
 // withBlock returns data with the herma block set to content, appended after
 // a blank line when absent, or removed (with the blank line herma added) when
-// content is empty.
+// content is empty. Markers are matched as whole lines.
 func withBlock(data, content []byte) ([]byte, error) {
-	start := []byte(CodexStart + "\n")
-	end := []byte(CodexEnd + "\n")
-	si, ei := bytes.Index(data, start), bytes.Index(data, end)
-	if bytes.Count(data, []byte(CodexStart)) > 1 || bytes.Count(data, []byte(CodexEnd)) > 1 || (si < 0) != (ei < 0) || (si >= 0 && ei < si) {
+	starts, ends := markerLines(data, CodexStart), markerLines(data, CodexEnd)
+	if bytes.Count(data, []byte(CodexStart)) != len(starts) || bytes.Count(data, []byte(CodexEnd)) != len(ends) ||
+		len(starts) != len(ends) || len(starts) > 1 || (len(starts) == 1 && ends[0][0] < starts[0][1]) {
 		return nil, ErrMalformedBlock
 	}
 	var block []byte
 	if len(content) > 0 {
-		block = append(append([]byte{}, start...), content...)
+		block = append([]byte(CodexStart+"\n"), content...)
 		if !bytes.HasSuffix(content, []byte("\n")) {
 			block = append(block, '\n')
 		}
-		block = append(block, end...)
+		block = append(block, CodexEnd+"\n"...)
 	}
-	if si < 0 {
+	if len(starts) == 0 {
 		if block == nil {
 			return data, nil
 		}
@@ -113,10 +133,9 @@ func withBlock(data, content []byte) ([]byte, error) {
 		}
 		return append(append(append([]byte{}, data...), sep...), block...), nil
 	}
-	before, after := data[:si], data[ei+len(end):]
-	if block == nil {
-		before = bytes.TrimSuffix(before, []byte("\n"))
-		return append(append([]byte{}, before...), after...), nil
+	before, after := data[:starts[0][0]], data[ends[0][1]:]
+	if block == nil && bytes.HasSuffix(before, []byte("\n\n")) {
+		before = before[:len(before)-1]
 	}
 	return append(append(append([]byte{}, before...), block...), after...), nil
 }
