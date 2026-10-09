@@ -227,7 +227,7 @@ func sessionStart(ctx context.Context, cfg config, requireToken bool, client str
 		}})
 	}
 	checkout := filepath.Dir(bindingPath)
-	projectSection, projectPath, warnings, err := projectPrinciples(ctx, cfg, client, binding, checkout)
+	projectSection, projectTooLong, warnings, err := projectPrinciples(ctx, cfg, client, binding, checkout)
 	if err != nil {
 		return hookWarning(stdout, "herma context unavailable: check the service (restart herma serve after upgrading herma) and credentials with herma context from this repository. Session startup will continue.")
 	}
@@ -238,7 +238,7 @@ func sessionStart(ctx context.Context, cfg config, requireToken bool, client str
 			global = tooLongNote("Global", globalPath)
 		}
 		if !fits() && projectSection != "" {
-			projectSection = tooLongNote("Project", projectPath)
+			projectSection = projectTooLong
 		}
 	}
 	if globalWarning != "" {
@@ -361,7 +361,9 @@ func globalPrinciples(ctx context.Context, cfg config, agent string) (section, p
 
 // projectPrinciples returns the project section: Claude keeps the checkout's
 // rules file and hears only of changes; Codex gets the principles inline.
-func projectPrinciples(ctx context.Context, cfg config, agent string, binding project.Binding, checkout string) (section, path string, warnings []string, err error) {
+// tooLong stands in for the section when Claude's context cannot hold it: it
+// names the rules file only when that file is current.
+func projectPrinciples(ctx context.Context, cfg config, agent string, binding project.Binding, checkout string) (section, tooLong string, warnings []string, err error) {
 	data, err := cfg.principlesFile(ctx, binding.ProjectID)
 	if err != nil {
 		// Only a project_unavailable error (the project is archived or no
@@ -380,7 +382,8 @@ func projectPrinciples(ctx context.Context, cfg config, agent string, binding pr
 		}
 		return "## Project principles\n" + string(data), "", nil, nil
 	}
-	path = filepath.Join(checkout, rules.Path)
+	path := filepath.Join(checkout, rules.Path)
+	inlineTooLong := "## Project principles\nherma project principles are too long to repeat here; read them with: herma principles --project " + binding.ProjectID + " before relying on them.\n"
 	if lines := bytes.Count(data, []byte{'\n'}); lines > rulesLineAdvice {
 		warnings = append(warnings, fmt.Sprintf("herma: %s has %d lines; Claude Code follows rules files best under 200 lines. Consider fewer or shorter principles.", rules.Path, lines))
 	}
@@ -388,20 +391,20 @@ func projectPrinciples(ctx context.Context, cfg config, agent string, binding pr
 		// Rules under ~/.claude apply to every Claude session, not this project.
 		warnings = append(warnings, "herma: this binding is in your home directory, where "+rules.Path+" would apply to every Claude session; principles are in the session context instead.")
 		if len(data) == 0 {
-			return "", path, warnings, nil
+			return "", "", warnings, nil
 		}
-		return "## Project principles\n" + string(data), path, warnings, nil
+		return "## Project principles\n" + string(data), inlineTooLong, warnings, nil
 	}
 	changed, serr := rules.Sync(checkout, data)
 	if serr != nil {
 		// Claude may have loaded a stale file; say these principles replace it.
 		warnings = append(warnings, "herma: could not write "+rules.Path+" ("+serr.Error()+"); principles are in the session context instead.")
-		return "## Project principles\nherma could not update " + path + "; these principles replace it.\n" + string(data), path, warnings, nil
+		return "## Project principles\nherma could not update " + path + "; these principles replace it.\n" + string(data), inlineTooLong, warnings, nil
 	}
 	if !changed {
-		return "", path, warnings, nil
+		return "", "", warnings, nil
 	}
-	return principlesSection("Project", path, data), path, warnings, nil
+	return principlesSection("Project", path, data), tooLongNote("Project", path), warnings, nil
 }
 
 // coordinationSummary is the one-line count of open coordination, or "" when
