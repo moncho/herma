@@ -137,3 +137,55 @@ func TestCodexBlockKeepsTheFileMode(t *testing.T) {
 		t.Fatalf("mode %v", info.Mode().Perm())
 	}
 }
+
+func TestCodexBlockMatchesMarkersAsLines(t *testing.T) {
+	cases := map[string]struct{ in, want string }{
+		"whole file CRLF": {
+			"# Mine\r\n\r\n" + CodexStart + "\r\nold\r\n" + CodexEnd + "\r\nTail\r\n",
+			"# Mine\r\n\r\n" + CodexStart + "\n" + block1 + CodexEnd + "\n" + "Tail\r\n",
+		},
+		"trailing space": {
+			"A\n" + CodexStart + " \nold\n" + CodexEnd + "\t\nB\n",
+			"A\n" + CodexStart + "\n" + block1 + CodexEnd + "\n" + "B\n",
+		},
+		"end marker at EOF": {
+			"A\n\n" + CodexStart + "\nold\n" + CodexEnd,
+			"A\n\n" + CodexStart + "\n" + block1 + CodexEnd + "\n",
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			home := codexHomeFor(t, c.in)
+			if changed, err := SyncCodexBlock(home, []byte(block1)); err != nil || !changed {
+				t.Fatalf("%v %v", changed, err)
+			}
+			if got := readAgents(t, home); got != c.want {
+				t.Fatalf("got %q\nwant %q", got, c.want)
+			}
+			if changed, err := SyncCodexBlock(home, []byte(block1)); err != nil || changed {
+				t.Fatalf("second sync: %v %v", changed, err)
+			}
+		})
+	}
+}
+
+func TestCodexBlockRefusesEndMarkerOnly(t *testing.T) {
+	text := "x\n" + CodexEnd + "\n"
+	home := codexHomeFor(t, text)
+	if _, err := SyncCodexBlock(home, []byte(block1)); !errors.Is(err, ErrMalformedBlock) {
+		t.Fatalf("err = %v", err)
+	}
+	if got := readAgents(t, home); got != text {
+		t.Fatal("file changed")
+	}
+}
+
+func TestCodexBlockRemovalKeepsLinesApart(t *testing.T) {
+	home := codexHomeFor(t, "# Mine\n"+CodexStart+"\n"+block1+CodexEnd+"\nMore\n")
+	if _, err := SyncCodexBlock(home, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := readAgents(t, home); got != "# Mine\nMore\n" {
+		t.Fatalf("got %q", got)
+	}
+}
