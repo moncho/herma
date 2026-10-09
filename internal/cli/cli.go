@@ -61,7 +61,7 @@ Commands:
   update ID --version N [fields] [--archived true|false]
   history ID
   project bind --project ID [--dir PATH] [--max-bytes N]
-  hook install --client claude|codex|both [--dir PATH]
+  hook install --client claude|codex|both [--dir CHECKOUT]   Install the user-level session hook; --dir also removes that checkout's old project-level hook
   hook session-start [--client claude|codex]  Load bounded project context for a SessionStart hook
   review [--limit N] [--offset N]  List proposed knowledge, principles and kinds, and pending kind changes
   status                       Binding, identity, review queue and backup age as JSON (for status lines)
