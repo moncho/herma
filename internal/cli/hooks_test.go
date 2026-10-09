@@ -17,6 +17,7 @@ import (
 
 	"github.com/moncho/herma/internal/api"
 	"github.com/moncho/herma/internal/backup"
+	"github.com/moncho/herma/internal/hooks"
 	"github.com/moncho/herma/internal/project"
 	"github.com/moncho/herma/internal/store"
 )
@@ -226,14 +227,58 @@ func TestHookInstallUsesAbsoluteCredentialsWithoutTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	runInput(t, context.Background(), "", "--credentials", credentials, "--identity", "session-a", "hook", "install", "--client", "both", "--dir", root)
-	for relative, client := range map[string]string{".claude/settings.local.json": "claude", ".codex/hooks.json": "codex"} {
-		data, err := os.ReadFile(filepath.Join(root, relative))
+	for relative, client := range map[string]string{".claude/settings.json": "claude", ".codex/hooks.json": "codex"} {
+		data, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), relative))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if bytes.Contains(data, []byte("do-not-embed-this-token")) || !bytes.Contains(data, []byte(credentials)) || !bytes.Contains(data, []byte("session-a")) || !bytes.Contains(data, []byte("'session-start' '--client' '"+client+"'")) {
 			t.Fatalf("wrong generated command: %s", data)
 		}
+	}
+}
+
+func TestHookInstallIsUserLevelAndRemovesProjectHooks(t *testing.T) {
+	cleanEnv(t)
+	credentials := filepath.Join(t.TempDir(), "credentials.json")
+	if err := os.WriteFile(credentials, []byte(`{"session-a":{"token":"do-not-embed-this-token-in-hook-configuration","role":"agent"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	checkout := t.TempDir()
+	if _, err := hooks.Install(checkout, "both", func(string) (string, error) { return "'/bin/herma' hook session-start", nil }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runCLI(t, "--credentials", credentials, "--identity", "session-a", "hook", "install", "--client", "both", "--dir", checkout); err != nil {
+		t.Fatal(err)
+	}
+	home := os.Getenv("HOME")
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "hooks.json")); err != nil {
+		t.Fatal(err)
+	}
+	for _, relative := range []string{".claude/settings.local.json", ".codex/hooks.json"} {
+		data, _ := os.ReadFile(filepath.Join(checkout, relative))
+		if strings.Contains(string(data), "herma-managed:session-start") {
+			t.Fatalf("project hook left behind in %s: %s", relative, data)
+		}
+	}
+}
+
+func TestHookInstallInHomeKeepsUserCodexHook(t *testing.T) {
+	cleanEnv(t)
+	credentials := filepath.Join(t.TempDir(), "credentials.json")
+	if err := os.WriteFile(credentials, []byte(`{"session-a":{"token":"agent-token-that-is-long-enough-for-herma","role":"agent"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	home := os.Getenv("HOME")
+	if _, err := runCLI(t, "--credentials", credentials, "--identity", "session-a", "hook", "install", "--client", "both", "--dir", home); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".codex", "hooks.json"))
+	if err != nil || !strings.Contains(string(data), "herma-managed:session-start") {
+		t.Fatalf("user-level Codex hook removed: %s %v", data, err)
 	}
 }
 
@@ -264,7 +309,7 @@ func TestTokenHookNeverFallsBackToCredentialFile(t *testing.T) {
 	}
 	t.Setenv("HERMA_TOKEN", "private-token-which-must-not-be-written")
 	runInput(t, context.Background(), "", "hook", "install", "--client", "claude", "--dir", root)
-	config, err := os.ReadFile(filepath.Join(root, ".claude", "settings.local.json"))
+	config, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".claude", "settings.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +468,7 @@ func TestHookInstallRegistersClaudePluginUserWide(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".claude", "settings.json"))
-	if err != nil || !strings.Contains(string(data), os.Getenv("HERMA_CLAUDE_PLUGIN_DIR")) || !strings.Contains(string(data), "mcp__herma__recall") {
+	if err != nil || !strings.Contains(string(data), os.Getenv("HERMA_CLAUDE_PLUGIN_DIR")) || !strings.Contains(string(data), "mcp__herma__recall") || !strings.Contains(string(data), "herma-managed:session-start") {
 		t.Fatalf("%s %v", data, err)
 	}
 	var settings struct {

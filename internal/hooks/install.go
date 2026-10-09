@@ -1,5 +1,6 @@
-// Package hooks installs project-local session hooks without changing unrelated
-// settings. Every destination is validated before any configuration is replaced.
+// Package hooks installs user-level session hooks and removes old project-level
+// ones without changing unrelated settings. Every destination is validated
+// before any configuration is replaced.
 package hooks
 
 import (
@@ -74,6 +75,67 @@ func Install(dir, client string, command func(client string) (string, error)) ([
 	default:
 		return nil, errors.New("hook client must be claude, codex, or both")
 	}
+	return install(dir, plans, command)
+}
+
+// InstallUser installs the managed SessionStart hook at user level, so it runs
+// in every folder: ~/.claude/settings.json for Claude and ~/.codex/hooks.json
+// for Codex.
+func InstallUser(home, client string, command func(client string) (string, error)) ([]Installation, error) {
+	claude := plan{client: "claude", path: filepath.Join(".claude", "settings.json")}
+	codex := plan{client: "codex", path: filepath.Join(".codex", "hooks.json")}
+	switch client {
+	case "claude":
+		return install(home, []plan{claude}, command)
+	case "codex":
+		return install(home, []plan{codex}, command)
+	case "both":
+		return install(home, []plan{claude, codex}, command)
+	}
+	return nil, errors.New("hook client must be claude, codex, or both")
+}
+
+// RemoveProject deletes herma's managed SessionStart entry from a checkout's
+// project-level hook files, leaving every other setting. Absent files stay
+// absent.
+func RemoveProject(dir, client string) ([]Installation, error) {
+	claude := plan{client: "claude", path: filepath.Join(".claude", "settings.local.json")}
+	codex := plan{client: "codex", path: filepath.Join(".codex", "hooks.json")}
+	var plans []plan
+	switch client {
+	case "claude":
+		plans = []plan{claude}
+	case "codex":
+		plans = []plan{codex}
+	case "both":
+		plans = []plan{claude, codex}
+	default:
+		return nil, errors.New("hook client must be claude, codex, or both")
+	}
+	root, abs, err := openDirectory(dir, "checkout")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	for i := range plans {
+		p := &plans[i]
+		p.before, p.info, err = readConfig(root, p.path)
+		if err != nil {
+			return nil, fmt.Errorf("inspect %s: %w", filepath.Join(abs, p.path), err)
+		}
+		p.after, _, err = unmerge(p.before)
+		if err != nil {
+			return nil, fmt.Errorf("invalid hook configuration %s: %w", filepath.Join(abs, p.path), err)
+		}
+		if p.after == nil {
+			p.after = p.before
+		}
+	}
+	return commit(root, abs, plans)
+}
+
+// install merges the managed hook into each plan's file under dir.
+func install(dir string, plans []plan, command func(client string) (string, error)) ([]Installation, error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, errors.New("project directory is required")
 	}
@@ -100,6 +162,12 @@ func Install(dir, client string, command func(client string) (string, error)) ([
 			return nil, fmt.Errorf("invalid hook configuration %s: %w", filepath.Join(abs, p.path), err)
 		}
 	}
+	return commit(root, abs, plans)
+}
+
+// commit stages every changed plan, rechecks that no destination changed in
+// the meantime, then renames the staged files into place.
+func commit(root *os.Root, abs string, plans []plan) ([]Installation, error) {
 	// Stage all files first, so malformed or unwritable second destinations do
 	// not cause an otherwise valid first destination to be overwritten.
 	defer func() {
@@ -121,10 +189,11 @@ func Install(dir, client string, command func(client string) (string, error)) ([
 		if err := checkDirectory(root, parent); err != nil {
 			return nil, err
 		}
-		p.staged, err = stage(root, parent, p.after)
+		staged, err := stage(root, parent, p.after)
 		if err != nil {
 			return nil, fmt.Errorf("prepare %s: %w", filepath.Join(abs, p.path), err)
 		}
+		p.staged = staged
 	}
 	// Refuse a changed destination instead of overwriting another editor's work.
 	for _, p := range plans {
@@ -392,6 +461,74 @@ func merge(data []byte, client, command string) ([]byte, error) {
 	return encodeSettings(settings)
 }
 
+// unmerge removes herma's managed SessionStart groups and drops SessionStart
+// and hooks when they end up empty. It reports whether anything was removed.
+func unmerge(data []byte) ([]byte, bool, error) {
+	if data == nil {
+		return nil, false, nil
+	}
+	settings, err := parseSettings(data)
+	if err != nil {
+		return nil, false, err
+	}
+	raw, ok := settings.get("hooks")
+	if !ok {
+		return data, false, nil
+	}
+	hookSettings, valid := raw.(*object)
+	if !valid {
+		return nil, false, errors.New("hooks must be a JSON object")
+	}
+	rawGroups, ok := hookSettings.get("SessionStart")
+	if !ok {
+		return data, false, nil
+	}
+	groups, valid := rawGroups.([]any)
+	if !valid {
+		return nil, false, errors.New("SessionStart hooks must be an array")
+	}
+	kept := []any{}
+	for _, raw := range groups {
+		if managedGroup(raw) {
+			continue
+		}
+		kept = append(kept, raw)
+	}
+	if len(kept) == len(groups) {
+		return data, false, nil
+	}
+	if len(kept) == 0 {
+		hookSettings.remove("SessionStart")
+	} else {
+		hookSettings.set("SessionStart", kept)
+	}
+	if len(hookSettings.keys) == 0 {
+		settings.remove("hooks")
+	}
+	out, err := encodeSettings(settings)
+	return out, true, err
+}
+
+// managedGroup reports whether a SessionStart group is herma's own entry.
+func managedGroup(raw any) bool {
+	group, ok := raw.(*object)
+	if !ok {
+		return false
+	}
+	rawHandlers, _ := group.get("hooks")
+	handlers, ok := rawHandlers.([]any)
+	if !ok || len(handlers) != 1 {
+		return false
+	}
+	h, ok := handlers[0].(*object)
+	if !ok {
+		return false
+	}
+	rawCommand, _ := h.get("command")
+	cmd, _ := rawCommand.(string)
+	return strings.HasSuffix(cmd, marker) || strings.HasSuffix(cmd, legacyMarker)
+}
+
 // object is a parsed JSON object that keeps its key order, so rewriting a
 // settings file changes only the entries this installer manages.
 type object struct {
@@ -411,6 +548,19 @@ func (o *object) set(key string, value any) {
 		o.keys = append(o.keys, key)
 	}
 	o.values[key] = value
+}
+
+func (o *object) remove(key string) {
+	if _, ok := o.values[key]; !ok {
+		return
+	}
+	delete(o.values, key)
+	for i, k := range o.keys {
+		if k == key {
+			o.keys = append(o.keys[:i], o.keys[i+1:]...)
+			break
+		}
+	}
 }
 
 func (o *object) MarshalJSON() ([]byte, error) {

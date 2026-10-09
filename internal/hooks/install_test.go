@@ -360,3 +360,70 @@ func TestInstallWritesEachClientsCommandAndUpgradesV1(t *testing.T) {
 		}
 	}
 }
+
+func TestInstallUserWritesUserLevelFiles(t *testing.T) {
+	home := t.TempDir()
+	command := commandForTest(t, "claude-agent")
+	installed, err := InstallUser(home, "both", sameCommand(command))
+	if err != nil || len(installed) != 2 {
+		t.Fatalf("%v %v", installed, err)
+	}
+	claude := readJSON(t, filepath.Join(home, ".claude", "settings.json"))
+	codex := readJSON(t, filepath.Join(home, ".codex", "hooks.json"))
+	for name, settings := range map[string]map[string]any{"claude": claude, "codex": codex} {
+		groups := settings["hooks"].(map[string]any)["SessionStart"].([]any)
+		cmd := groups[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"].(string)
+		if !strings.HasSuffix(cmd, marker) {
+			t.Fatalf("%s command %q", name, cmd)
+		}
+	}
+	again, err := InstallUser(home, "both", sameCommand(command))
+	if err != nil || again[0].Changed || again[1].Changed {
+		t.Fatalf("reinstall changed files: %v %v", again, err)
+	}
+}
+
+func TestRemoveProjectDeletesOnlyHermasEntry(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Install(dir, "both", sameCommand(commandForTest(t, "worker"))); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(dir, ".claude", "settings.local.json")
+	settings := readJSON(t, other)
+	groups := settings["hooks"].(map[string]any)["SessionStart"].([]any)
+	groups = append(groups, map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "/usr/bin/true"}}})
+	settings["hooks"].(map[string]any)["SessionStart"] = groups
+	settings["permissions"] = map[string]any{"allow": []any{"Bash(ls)"}}
+	data, _ := json.Marshal(settings)
+	if err := os.WriteFile(other, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := RemoveProject(dir, "both")
+	if err != nil || !removed[0].Changed || !removed[1].Changed {
+		t.Fatalf("%v %v", removed, err)
+	}
+	after := readJSON(t, other)
+	left := after["hooks"].(map[string]any)["SessionStart"].([]any)
+	if len(left) != 1 || after["permissions"] == nil {
+		t.Fatalf("claude settings after removal: %v", after)
+	}
+	codex := readJSON(t, filepath.Join(dir, ".codex", "hooks.json"))
+	if _, ok := codex["hooks"]; ok {
+		t.Fatalf("empty codex hooks should be dropped: %v", codex)
+	}
+	again, err := RemoveProject(dir, "both")
+	if err != nil || again[0].Changed || again[1].Changed {
+		t.Fatalf("second removal: %v %v", again, err)
+	}
+}
+
+func TestRemoveProjectWithoutFilesIsANoOp(t *testing.T) {
+	dir := t.TempDir()
+	removed, err := RemoveProject(dir, "both")
+	if err != nil || removed[0].Changed || removed[1].Changed {
+		t.Fatalf("%v %v", removed, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude")); !os.IsNotExist(err) {
+		t.Fatal("created .claude")
+	}
+}

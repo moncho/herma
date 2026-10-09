@@ -35,7 +35,7 @@ const (
 
 func hook(ctx context.Context, cfg config, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: herma hook install --client claude|codex|both [--dir PATH] | herma hook session-start [--client claude|codex]")
+		return errors.New("usage: herma hook install --client claude|codex|both [--dir CHECKOUT] | herma hook session-start [--client claude|codex]")
 	}
 	switch args[0] {
 	case "install":
@@ -59,7 +59,7 @@ func hook(ctx context.Context, cfg config, args []string, stdin io.Reader, stdou
 func installHook(cfg config, args []string, stdout, stderr io.Writer) error {
 	fs := flags("hook install", stderr)
 	agent := fs.String("client", "", "claude, codex, or both (required)")
-	dir := fs.String("dir", ".", "bound repository directory")
+	dir := fs.String("dir", ".", "checkout whose old project-level herma hook to remove")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
@@ -69,10 +69,6 @@ func installHook(cfg config, args []string, stdout, stderr io.Writer) error {
 	absoluteDir, err := filepath.Abs(*dir)
 	if err != nil {
 		return err
-	}
-	_, bindingPath, err := project.Discover(absoluteDir)
-	if err != nil {
-		return fmt.Errorf("find hook project: %w; first run herma project bind --project ID in the repository root", err)
 	}
 	// Validate authentication now; never write a bearer token into hook config.
 	if _, err := cfg.client(); err != nil {
@@ -106,13 +102,24 @@ func installHook(cfg config, args []string, stdout, stderr io.Writer) error {
 		}
 		return hooks.QuoteCommand(args)
 	}
-	installations, err := hooks.Install(filepath.Dir(bindingPath), *agent, command)
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
+	installations, err := hooks.InstallUser(home, *agent, command)
+	if err != nil {
+		return err
+	}
+	removed := []hooks.Installation{}
+	if client := projectClient(absoluteDir, home, *agent); client != "" {
+		if removed, err = hooks.RemoveProject(absoluteDir, client); err != nil {
+			return err
+		}
+	}
 	result := map[string]any{
 		"installed": installations,
-		"message":   "Start a new session. In Codex, review and trust this hook through /hooks first. Token-based hooks require HERMA_TOKEN in the agent environment.",
+		"removed":   removed,
+		"message":   "Start a new session. herma now runs in every folder; a checkout needs only its .herma-project.json. In Codex, review and trust the user-level hook through /hooks first. Token-based hooks require HERMA_TOKEN in the agent environment.",
 	}
 	if *agent == "claude" || *agent == "both" {
 		if os.Getenv("HERMA_TOKEN") != "" {
@@ -141,6 +148,21 @@ func installHook(cfg config, args []string, stdout, stderr io.Writer) error {
 		result["permission_advice"] = "Keep agents from reading the reviewer token: in Claude Code, add \"Read(/" + credentials + ")\" to permissions.deny; in Codex, keep the credentials outside the writable workspace."
 	}
 	return output(stdout, result)
+}
+
+// projectClient names the clients whose project-level hook to remove from dir.
+// In the home folder, Codex's project file is the user-level hooks.json just
+// installed, so only Claude's settings.local.json is a project file there.
+func projectClient(dir, home, client string) string {
+	dirInfo, dirErr := os.Stat(dir)
+	homeInfo, homeErr := os.Stat(home)
+	if dirErr != nil || homeErr != nil || !os.SameFile(dirInfo, homeInfo) {
+		return client
+	}
+	if client == "codex" {
+		return ""
+	}
+	return "claude"
 }
 
 // installClaudePlugin writes herma's built-in Claude Code plugin into the data
