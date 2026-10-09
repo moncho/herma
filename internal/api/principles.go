@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -12,9 +13,12 @@ import (
 	"github.com/moncho/herma/internal/store"
 )
 
-// principlesFileHeader starts every rendered rules file. Claude Code strips the
-// HTML comment before injecting the rules, so it costs no model context.
-const principlesFileHeader = rules.Header + " Edits are overwritten; change them in herma. -->\n# Project principles (reviewed in herma)\n"
+// principlesFileHeader starts a project rules file and globalPrinciplesFileHeader
+// the global one. Claude Code strips the HTML comment, so it costs no context.
+const (
+	principlesFileHeader       = rules.Header + " Edits are overwritten; change them in herma. -->\n# Project principles (reviewed in herma)\n"
+	globalPrinciplesFileHeader = rules.Header + " Edits are overwritten; change them in herma. -->\n# Global principles (reviewed in herma)\n"
+)
 
 // projectUnavailableCode marks a principles request whose project is gone or
 // archived, so the hook knows to remove the generated rules file.
@@ -29,11 +33,15 @@ func (h *Handler) principles(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, err)
 		return
 	}
-	if q.Get("project_id") == "" {
-		badRequest(w, errors.New("project_id is required"))
-		return
+	projectID := q.Get("project_id")
+	var records []store.Record
+	var total int
+	var err error
+	if projectID == "" {
+		records, total, err = h.globalPrinciples(r.Context())
+	} else {
+		records, total, err = h.principleSnapshot(r.Context(), projectID)
 	}
-	records, total, err := h.principleSnapshot(r.Context(), q.Get("project_id"))
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, projectUnavailableCode, "project not found")
@@ -45,7 +53,7 @@ func (h *Handler) principles(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
-	data := renderPrinciples(q.Get("project_id"), records, total)
+	data := renderPrinciples(projectID, records, total)
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(http.StatusOK)
@@ -65,7 +73,21 @@ func (h *Handler) principleSnapshot(ctx context.Context, projectID string) ([]st
 	if project.Archived {
 		return nil, 0, errProjectArchived
 	}
-	return h.contextRecords(ctx, projectID, "principle", []string{"accepted"}, true, false, contextLimit)
+	return h.contextRecords(ctx, projectID, "principle", []string{"accepted"}, false, false, contextLimit)
+}
+
+// globalPrinciples returns accepted principles that belong to no project, in
+// context order.
+func (h *Handler) globalPrinciples(ctx context.Context) ([]store.Record, int, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	result, err := h.store.List(ctx, store.ListOptions{Kind: "principle", Status: "accepted", Global: true, Limit: contextLimit})
+	if err != nil {
+		return nil, 0, err
+	}
+	items := result.Items
+	sort.Slice(items, func(i, j int) bool { return contextRecordLess(items[i], items[j], false) })
+	return items, result.Total, nil
 }
 
 // renderPrinciples writes the rules file in context order with bodies
@@ -75,7 +97,13 @@ func renderPrinciples(projectID string, records []store.Record, total int) []byt
 		return nil
 	}
 	var b strings.Builder
-	b.WriteString(principlesFileHeader)
+	list := "list them all with: herma list --project " + projectID + " --kind principle --status accepted --limit 200"
+	if projectID == "" {
+		b.WriteString(globalPrinciplesFileHeader)
+		list = "list them all with: herma list --global --kind principle --status accepted --limit 200"
+	} else {
+		b.WriteString(principlesFileHeader)
+	}
 	for _, r := range records {
 		scope := "project"
 		if r.ProjectID == "" {
@@ -88,7 +116,6 @@ func renderPrinciples(projectID string, records []store.Record, total int) []byt
 		fmt.Fprintf(&b, "\nherma: %s · %s\n", r.ID, scope)
 	}
 	if hidden := total - len(records); hidden > 0 {
-		list := "list them all with: herma list --project " + projectID + " --kind principle --status accepted --limit 200 (use --global instead of --project for global ones)"
 		if hidden == 1 {
 			fmt.Fprintf(&b, "\n1 more accepted principle (the lowest-priority one) is not shown; %s\n", list)
 		} else {
