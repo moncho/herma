@@ -56,7 +56,7 @@ func schemaDocument(kinds []store.Kind) map[string]any {
 			"query": map[string]string{
 				"project_id":      "required unarchived project ID",
 				"max_bytes":       "complete response bytes in the requested format, including metadata and newline; default 10000, minimum 2048, maximum 65536",
-				"format":          "json (default) or text; text is the compact rendering sessions read",
+				"format":          "json (default), text or summary; text is the compact rendering sessions read; summary is one line of section counts (empty when nothing is open) that ignores max_bytes and principles",
 				"principles":      "include (default), omit, changed or replace; changed (text format only) labels them as replacing .claude/rules/herma/principles.md after it changed; replace (text format only) labels them as replacing that file because herma could not update it",
 				"include_durable": "boolean, default false; true adds accepted global/project knowledge after coordination records and notes",
 			},

@@ -52,6 +52,10 @@ func (h *Handler) projectContext(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, errors.New("project_id is required"))
 		return
 	}
+	if q.Get("format") == "summary" {
+		h.contextSummary(w, r, q.Get("project_id"))
+		return
+	}
 	budget, err := queryInt(q, "max_bytes", defaultContextBytes)
 	if err != nil {
 		badRequest(w, err)
@@ -73,7 +77,7 @@ func (h *Handler) projectContext(w http.ResponseWriter, r *http.Request) {
 	case "text":
 		format = textFormat{}
 	default:
-		badRequest(w, errors.New("format must be json or text"))
+		badRequest(w, errors.New("format must be json, text or summary"))
 		return
 	}
 	principles := q.Get("principles")
