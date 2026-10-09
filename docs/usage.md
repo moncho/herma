@@ -31,12 +31,22 @@ Each identity in `credentials.json` has a role:
 
 Agents create knowledge and principles as `proposed`. Proposed records are found
 by `list` and search, but never loaded into session context. To approve one, the
-reviewer reads it and updates it at that version:
+reviewer reads it and accepts it:
 
 ```sh
 herma review
-herma --identity owner update RECORD_ID --version N --status accepted
+herma --identity owner accept RECORD_ID [RECORD_ID ...]
+herma --identity owner accept NEW_ID --replaces OLD_ID
+herma --identity owner accept --all
 ```
+
+`accept` reads each record's current version itself and reports every record
+under `accepted`, `superseded` or `failed`; one failure does not stop the
+others, but the command exits nonzero. `--replaces` marks the old record
+`superseded` only after the new one is accepted, so one of them always applies.
+`--all` accepts every proposed principle, knowledge record and kind; pending kind
+changes still need `update KIND_ID --version N --accept-pending`. Rejecting, or
+any other status, uses `update` with `--version`.
 
 Kind definitions follow `proposed`, `accepted`, `retired`, and only the reviewer
 moves them (see Custom kinds). `herma review` lists proposed kinds under `kinds` and
@@ -45,7 +55,7 @@ accepted kinds with a pending change under `pending_kind_changes`.
 Accepting requires at least one `--sources` entry. The server records
 `reviewed_by` and `reviewed_at`. Agents cannot change accepted, rejected or
 superseded records; to improve one, create a new proposed record that links to
-it.
+it, and the reviewer accepts it with `--replaces`.
 
 Manage identities with `herma identity add NAME [--role agent|read-only|reviewer]`
 and `herma identity revoke NAME`. A running server applies changes within about two

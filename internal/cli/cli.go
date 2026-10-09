@@ -65,6 +65,9 @@ Commands:
   hook session-start [--client claude|codex]
                                SessionStart hook: principles in every folder, plus a coordination summary in bound checkouts
   review [--limit N] [--offset N]  List proposed knowledge, principles and kinds, and pending kind changes
+  accept ID [ID ...] | accept NEW --replaces OLD | accept --all
+                               Reviewer: accept proposals at their current version; --replaces
+                               supersedes OLD after NEW is accepted
   status                       Binding, identity, review queue and backup age as JSON (for status lines)
   context [--project ID] [--max-bytes N] [--include-durable] [--format text|json] [--principles include|omit]
                                Compact session context (text by default)
@@ -196,6 +199,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return kindCommand(ctx, cfg, rest, stdout, stderr)
 	case "review":
 		return review(ctx, cfg, rest, stdout, stderr)
+	case "accept":
+		return accept(ctx, cfg, rest, stdout, stderr)
 	case "status":
 		return statusCommand(ctx, cfg, rest, stdout, stderr)
 	case "hook":

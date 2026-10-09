@@ -81,7 +81,7 @@ In another terminal, an agent proposes something and you review it:
 herma create --kind knowledge --title 'SQLite runs in WAL mode' \
   --sources https://sqlite.org/wal.html
 herma review
-herma --identity owner update RECORD_ID --version 1 --status accepted
+herma --identity owner accept RECORD_ID
 ```
 
 To load your principles into every Claude Code and Codex session, install the
