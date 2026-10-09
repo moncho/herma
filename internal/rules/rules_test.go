@@ -263,3 +263,72 @@ func TestSyncReportsWriteFailures(t *testing.T) {
 		t.Fatalf("err = %v, want a write error", err)
 	}
 }
+
+func TestSyncGlobalWritesReplacesAndRemoves(t *testing.T) {
+	home := t.TempDir()
+	if err := os.Mkdir(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte(Header + " -->\n# Global principles (reviewed in herma)\n\n## One\n")
+	changed, err := SyncGlobal(home, content)
+	if err != nil || !changed {
+		t.Fatalf("first sync: %v %v", changed, err)
+	}
+	got, err := os.ReadFile(filepath.Join(home, GlobalPath))
+	if err != nil || string(got) != string(content) {
+		t.Fatalf("file %q %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "rules", "herma", ".gitignore")); !os.IsNotExist(err) {
+		t.Fatalf("global sync must not write a .gitignore: %v", err)
+	}
+	if changed, err := SyncGlobal(home, content); err != nil || changed {
+		t.Fatalf("same content: %v %v", changed, err)
+	}
+	if changed, err := SyncGlobal(home, nil); err != nil || !changed {
+		t.Fatalf("removal: %v %v", changed, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, GlobalPath)); !os.IsNotExist(err) {
+		t.Fatalf("file still present: %v", err)
+	}
+}
+
+func TestSyncGlobalSkipsWithoutClaudeHome(t *testing.T) {
+	home := t.TempDir()
+	if changed, err := SyncGlobal(home, []byte(Header+" -->\n")); err != nil || changed {
+		t.Fatalf("got %v %v", changed, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude")); !os.IsNotExist(err) {
+		t.Fatal("created ~/.claude")
+	}
+}
+
+func TestSyncGlobalRefusesSymlinkedRulesDir(t *testing.T) {
+	home := t.TempDir()
+	target := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(home, ".claude", "rules")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SyncGlobal(home, []byte(Header+" -->\n")); !errors.Is(err, ErrUnsafePath) {
+		t.Fatalf("err = %v, want ErrUnsafePath", err)
+	}
+	if entries, _ := os.ReadDir(target); len(entries) != 0 {
+		t.Fatal("wrote through the symlink")
+	}
+}
+
+func TestSyncGlobalLeavesAHandWrittenFile(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".claude", "rules", "herma")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "global-principles.md"), []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SyncGlobal(home, []byte(Header+" -->\n")); !errors.Is(err, ErrUnsafePath) {
+		t.Fatalf("err = %v", err)
+	}
+}
