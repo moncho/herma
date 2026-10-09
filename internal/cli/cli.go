@@ -69,6 +69,7 @@ Commands:
                                Compact session context (text by default)
   recall "words" [--project ID] [--include-proposed] [--limit N] [--max-bytes N]
                                Search reviewed knowledge and principles by relevance
+  principles [--project ID]    Accepted principles as markdown: global, or one project's
   schema
   export
 
@@ -211,6 +212,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return projectContextCommand(ctx, cfg, rest, stdout, stderr)
 	case "recall":
 		return recallCommand(ctx, cfg, rest, stdout, stderr)
+	case "principles":
+		return principlesCommand(ctx, cfg, rest, stdout, stderr)
 	case "schema", "export":
 		if err := noOptions(command, rest, stderr); err != nil {
 			return err
