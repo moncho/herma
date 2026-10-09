@@ -57,30 +57,15 @@ type plan struct {
 	staged string
 }
 
-// Install creates or updates the managed SessionStart hook for claude, codex,
-// or both. command returns the safely quoted command (normally from QuoteCommand) for each client.
-// The stable shell-comment marker identifies only this installer's own entry.
-// Existing malformed JSON, duplicate keys, and symlink destinations are errors.
-// File replacements are individually atomic; a rare commit failure may return
-// already-completed installations alongside its error.
-func Install(dir, client string, command func(client string) (string, error)) ([]Installation, error) {
-	var plans []plan
-	switch client {
-	case "claude":
-		plans = []plan{{client: "claude", path: filepath.Join(".claude", "settings.local.json")}}
-	case "codex":
-		plans = []plan{{client: "codex", path: filepath.Join(".codex", "hooks.json")}}
-	case "both":
-		plans = []plan{{client: "claude", path: filepath.Join(".claude", "settings.local.json")}, {client: "codex", path: filepath.Join(".codex", "hooks.json")}}
-	default:
-		return nil, errors.New("hook client must be claude, codex, or both")
-	}
-	return install(dir, plans, command)
-}
-
-// InstallUser installs the managed SessionStart hook at user level, so it runs
-// in every folder: ~/.claude/settings.json for Claude and ~/.codex/hooks.json
-// for Codex.
+// InstallUser is herma's hook installer: it creates or updates the managed
+// SessionStart hook at user level, so it runs in every folder:
+// ~/.claude/settings.json for Claude and ~/.codex/hooks.json for Codex.
+// command returns the safely quoted command (normally from QuoteCommand) for
+// each client. The stable shell-comment marker identifies only this
+// installer's own entry. Existing malformed JSON, duplicate keys, and symlink
+// destinations are errors. File replacements are individually atomic; a rare
+// commit failure may return already-completed installations alongside its
+// error.
 func InstallUser(home, client string, command func(client string) (string, error)) ([]Installation, error) {
 	claude := plan{client: "claude", path: filepath.Join(".claude", "settings.json")}
 	codex := plan{client: "codex", path: filepath.Join(".codex", "hooks.json")}

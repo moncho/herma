@@ -138,6 +138,18 @@ func TestClaudeHookReplacesAStaleRulesFileItCannotUpdate(t *testing.T) {
 	}
 }
 
+func TestClaudeHookDisownsAStaleRulesFileWhenNoPrinciplesRemain(t *testing.T) {
+	_, _, root := claudeHookFixture(t, 0, nil)
+	if err := os.Symlink(t.TempDir(), filepath.Join(root, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+	got := runSessionHook(t, root, "--client", "claude")
+	want := "; no herma project principles apply now, so disregard the ones loaded from it."
+	if !strings.HasPrefix(got.Context, "## Project principles\nherma could not update ") || !strings.Contains(got.Context, want) || strings.Contains(got.Context, "replace it") || !strings.Contains(got.Message, "could not write "+rules.Path) {
+		t.Fatalf("empty fallback: %+v", got)
+	}
+}
+
 func TestClaudeHookWarnsAboutLongRulesFiles(t *testing.T) {
 	db, p, root := claudeHookFixture(t, 0, nil)
 	reviewed(t, db, store.CreateInput{Kind: "principle", Title: "Long rule", Body: strings.Repeat("line\n", 250), ProjectID: p.ID})

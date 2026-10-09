@@ -133,3 +133,16 @@ func TestPrinciplesEndpointValidatesTheProject(t *testing.T) {
 		}
 	}
 }
+
+func TestSchemaDescribesBothPrinciplesFiles(t *testing.T) {
+	h, _ := apiTestHandler(t, nil)
+	body := apiTestRequest(h, http.MethodGet, "/v1/schema", "", "", "Bearer "+apiTestToken, "").Body.String()
+	for _, want := range []string{`/v1/principles[?project_id={id}]`, "without project_id", "only that project"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("schema lacks %q", want)
+		}
+	}
+	if strings.Contains(body, "project and global principles") {
+		t.Error("schema still says the project file holds global principles")
+	}
+}

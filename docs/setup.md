@@ -104,8 +104,18 @@ it per repository or per worktree:
 herma --identity local-agent hook install --client both
 ```
 
-Use an agent identity; hook installation refuses the reviewer. It needs no
-binding. To also give a repository its own principles and a coordination
+Use an agent identity; hook installation refuses the reviewer. To tell Claude
+and Codex sessions apart in herma's history, give each client its own agent
+identity and install them separately instead:
+
+```sh
+herma --identity <claude-identity> hook install --client claude
+herma --identity <codex-identity> hook install --client codex
+```
+
+Prefer this when both clients work on the same projects and you want each
+record to show which one wrote it; `--client both` is simpler when one identity
+is enough. Installation needs no binding. To also give a repository its own principles and a coordination
 summary, create one herma project for it and bind it from the repository root.
 Replace `PROJECT_ID` with the ID returned by the first command:
 
@@ -123,19 +133,24 @@ merges a synchronous SessionStart hook into `~/.claude/settings.json` and/or
 `~/.codex/hooks.json`, preserving existing settings and other hooks. Repeating
 installation updates herma's own hook without duplicating it. Each client's hook
 runs `herma hook session-start --client <client>`; rerun `herma hook install` after
-upgrading herma so existing hooks gain the flag. When upgrading, restart
-`herma serve` on the new binary first, then rerun `herma hook install`, so hooks never
-talk to an older server. Bindings still at the old 12,288-byte default are
-clamped to 10,000 for Claude without a warning; other values above 10,000 warn
-on each session until lowered. Commands capture the
+upgrading herma so existing hooks gain the flag. For this release, upgrade the
+clients before the server: on every client machine install the new binary and
+rerun `herma hook install`, then restart `herma serve` on the new binary. An old
+client talking to a new server gets only project principles and loses the global
+ones; a new client talking to an old server only lacks the coordination summary
+line. The hook loads no record text, so it ignores the binding's `max_bytes`;
+that budget applies to `herma context`. Commands capture the
 executable, service URL and credential-file path, never a token. Keep these
 machine-specific hook files out of repositories; the generated `.herma-project.json`
 contains only the project ID and budget and can be committed for other
 sessions and worktrees.
 
-`hook install --dir CHECKOUT` also removes herma's old project-level hook entries
-(`.claude/settings.local.json`, `.codex/hooks.json`) from that checkout, so a
-checkout set up before the user-level hook does not run herma twice. The Codex
+`hook install` also removes herma's old project-level hook entries
+(`.claude/settings.local.json`, `.codex/hooks.json`) from the checkout named by
+`--dir`, which defaults to the current folder, so running it inside a checkout
+set up before the user-level hook keeps that checkout from running herma twice.
+The output lists the files it changed under `removed`; if a checkout's files
+cannot be changed, it reports `remove_warning` and still installs the plugin. The Codex
 home is `$CODEX_HOME` when set, else `~/.codex`; `hook install` does not handle a
 `CODEX_HOME` other than `~/.codex`.
 
@@ -229,11 +244,15 @@ agent identity and server you installed with. It shows an error instead of
 registering tools if that identity turns out to be a reviewer. It
 works only in the CLI: in the desktop app it shows `herma ✗` and offers no tools.
 
-
-To remove it, delete the herma path from `env.CLAUDE_CODE_PLUGIN_DIRS`, the
+To remove the plugin, delete the herma path from `env.CLAUDE_CODE_PLUGIN_DIRS`, the
 `pluginConfigs.herma` entry (with its four options `herma`, `credentials`, `identity`
 and `url`) and the two `mcp__herma__` rules from
-`~/.claude/settings.json`, and delete `~/.config/herma/plugins/claude`.
+`~/.claude/settings.json`, and delete `~/.config/herma/plugins/claude`. To remove
+the hook as well, delete herma's SessionStart entry (its command ends in
+`# herma-managed:session-start:v2`) from `~/.claude/settings.json` and
+`~/.codex/hooks.json`, delete `~/.claude/rules/herma/global-principles.md`, and
+delete the lines from `<!-- herma:principles:start` to `<!-- herma:principles:end -->`
+in `AGENTS.md` in the Codex home.
 
 The status line reads `herma status`, which you can also run yourself, in a
 bound checkout or not:

@@ -110,16 +110,26 @@ func installHook(cfg config, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	removed := []hooks.Installation{}
-	if client := projectClient(absoluteDir, home, *agent); client != "" {
-		if removed, err = hooks.RemoveProject(absoluteDir, client); err != nil {
-			return err
-		}
-	}
 	result := map[string]any{
 		"installed": installations,
-		"removed":   removed,
 		"message":   "Start a new session. herma now runs in every folder; a checkout needs only its .herma-project.json. In Codex, review and trust the user-level hook through /hooks first. Token-based hooks require HERMA_TOKEN in the agent environment.",
+	}
+	// The user hook is already written, so a checkout whose old project hook
+	// cannot be removed is a warning, not a failure.
+	if client := projectClient(absoluteDir, home, *agent); client != "" {
+		removals, err := hooks.RemoveProject(absoluteDir, client)
+		if err != nil {
+			result["remove_warning"] = err.Error()
+		}
+		var removed []hooks.Installation
+		for _, r := range removals {
+			if r.Changed {
+				removed = append(removed, r)
+			}
+		}
+		if len(removed) > 0 {
+			result["removed"] = removed
+		}
 	}
 	if *agent == "claude" || *agent == "both" {
 		if os.Getenv("HERMA_TOKEN") != "" {
@@ -421,6 +431,9 @@ func projectPrinciples(ctx context.Context, cfg config, agent string, binding pr
 	if serr != nil {
 		// Claude may have loaded a stale file; say these principles replace it.
 		warnings = append(warnings, "herma: could not write "+rules.Path+" ("+serr.Error()+"); principles are in the session context instead.")
+		if len(data) == 0 {
+			return "## Project principles\nherma could not update " + path + "; no herma project principles apply now, so disregard the ones loaded from it.\n", "", warnings, nil
+		}
 		return "## Project principles\nherma could not update " + path + "; these principles replace it.\n" + string(data), inlineTooLong, warnings, nil
 	}
 	if !changed {
