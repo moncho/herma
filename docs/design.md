@@ -19,12 +19,23 @@ validation, references, search and all transactional writes.
 `internal/project` resolves a repository's nonsecret binding; `internal/hooks`
 merges client hook configurations while preserving other settings.
 
-The product scope is coordination between concurrent sessions and handoffs to
-their successors, plus reviewed durable knowledge. Agents propose knowledge and
-principle records and the reviewer accepts them; the issue tracker owns real
-tasks. Task records describe temporary session working intent, ownership and
-blockers with source links; notes describe handoffs. Accepted principles load into every
-session's context; knowledge is found with `herma recall` or `--include-durable`.
+The product scope is memory that shapes agent behavior: principles first,
+reviewed knowledge second. Agents propose principle and knowledge records and the
+reviewer accepts them; the issue tracker owns real tasks. herma also holds
+coordination records that agents may use freely: task records describe
+temporary session working intent, ownership and blockers with source links, and
+notes describe handoffs. Agents pull them with `herma context` when they judge it
+helps. Session start loads only reviewed principles and a one-line count of the
+coordination records; knowledge is found with `herma recall` or
+`--include-durable`.
+
+Only reviewed principles are meant to shape behavior, and agents copy what they
+see in context, so unreviewed records are never delivered as standing
+instructions.
+
+Principles travel in instruction files (Claude user and project rules, a managed
+block in Codex's AGENTS.md) rather than in hook context. Hook context is capped
+(Claude: 10,000 characters) and cannot guarantee the full set arrives.
 
 ## Data and concurrency
 
@@ -74,9 +85,11 @@ when the file changes; an invalid file keeps the previous identities.
 - Field filters and sorts are evaluated over the record's JSON with
   `json_extract`; indexes cover the kind and kind names, not individual fields,
   so a query scans one kind's rows.
-- SessionStart hooks load context for bound projects in Claude Code and Codex.
-  They read only, refresh at session boundaries, and fail open after a short
-  deadline. They do not write a handoff automatically or watch other sessions.
+- One user-level SessionStart hook per client runs in every folder in Claude Code
+  and Codex. It syncs principles to the instruction files, adds the coordination
+  summary in bound checkouts, refreshes at session boundaries, and fails open
+  after a short deadline. It does not write a handoff automatically or watch
+  other sessions.
 - No automatic ingestion, orchestration, issue-tracker synchronization, job
   scheduling or web interface. Agents record coordination changes explicitly.
 - No hard deletion or retention policy; history and retry receipts accumulate.

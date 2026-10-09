@@ -1,19 +1,27 @@
 # herma
 
-A shared memory for AI agent sessions working on the same project.
+A shared memory that makes every AI agent you use work the way you expect.
 
-Several Claude Code or Codex sessions on one codebase keep stepping on each
-other: two edit the same package, a blocker found in one never reaches the next,
-and every new session starts from zero. herma gives them one place to say who is
-working where, what is blocked, what changed and what the next session should
-know, and a reviewed store of knowledge that outlives any single session.
+Agents forget you between sessions, and each tool and each project learns your
+preferences separately, if at all. herma keeps one memory for all of them: the
+principles you approve about how agents should work, and reviewed knowledge
+about each project. Every Claude Code or Codex session, in any folder and
+including agents spawned by other agents, loads your principles at start, and
+agents propose new ones as they learn how you work.
 
-- **Coordination that loads itself.** A SessionStart hook hands every new session
-  a compact, byte-capped packet of open work, blockers and recent handoffs. In
-  Claude Code, a plugin adds a herma status line and lets the model search herma.
+- **Principles everywhere.** Global principles are written into each client's
+  standing instructions (`~/.claude/rules/herma/global-principles.md`, a managed
+  block in `~/.codex/AGENTS.md`); a bound repository adds its own. Other tools
+  can fetch them with `herma principles`.
 - **Memory you approve.** Agents propose knowledge and principles; only you, the
-  reviewer, can accept them. Accepted principles load into every session, and
-  `herma recall "words"` finds the rest by relevance. Nothing unreviewed is loaded.
+  reviewer, can accept them. `herma recall "words"` finds accepted knowledge by
+  relevance, and nothing unreviewed is loaded. In Claude Code, a toast tells you
+  when a proposal arrives, and a plugin adds a herma status line and lets the
+  model search herma.
+- **Coordination when it helps.** Agents can also use herma to coordinate,
+  message each other and hand work over. A bound repository's sessions start
+  with a one-line count of open tasks, feedback and recent notes, and read them
+  with `herma context` when relevant.
 - **Works across machines.** Agents on other machines connect through a
   tunnel with their own tokens. Your reviewer token works only on a local socket,
   so a copied token can't approve anything.
@@ -38,7 +46,8 @@ Sessions write short records through a CLI or an authenticated HTTP API:
 Every change is versioned, so a stale edit gets a conflict instead of
 overwriting another session's work, and every revision is kept.
 
-A new session in a bound repository starts with context like this:
+`herma context` prints a bound repository's coordination records on demand,
+like this:
 
 ```
 herma context · project My repository (rec_998b…) · 2026-10-06T09:36Z
@@ -75,25 +84,26 @@ herma review
 herma --identity owner update RECORD_ID --version 1 --status accepted
 ```
 
-To load context into your agent sessions, create a project for your repository
-and bind it from the repository's root:
+To load your principles into every Claude Code and Codex session, install the
+hook once per user. To add a repository's own principles and its coordination
+summary, create a project and bind the repository from its root:
 
 ```sh
+herma hook install --client both   # or claude, or codex
 herma create --kind project --title 'My repository' --status active
 herma project bind --project PROJECT_ID
-herma hook install --client both   # or claude, or codex
 ```
 
-New Claude Code and Codex sessions in that repository then start with herma
-context. [Setting up herma](docs/setup.md) covers the details, including worktrees
-and Codex hook trust.
+New sessions then start with your principles in any folder, and with the
+repository's as well in a bound one. [Setting up herma](docs/setup.md) covers
+the details, including Codex hook trust.
 
 ## Documentation
 
 - [Setting up herma](docs/setup.md): building, running the service, and loading
-  context automatically in Claude Code and Codex sessions.
-- [Using herma](docs/usage.md): records, roles and review, the CLI, session context
-  and search.
+  principles automatically in Claude Code and Codex sessions.
+- [Using herma](docs/usage.md): records, roles and review, the CLI, session context,
+  principles and search.
 - [Operating herma](docs/operations.md): remote access, what the roles protect
   against, backups and restore.
 - [Agent workflow](docs/agent-workflow.md): a session handover pattern.

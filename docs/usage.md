@@ -268,18 +268,21 @@ Principles come first and may use at most half of the budget; coordination gets
 whatever they leave. Each record preview uses at most 2 KiB or a quarter of the
 budget, whichever is smaller.
 
-In Claude Code, the SessionStart hook writes accepted principles to
-`.claude/rules/herma/principles.md` in the checkout (next to a `.gitignore`
-containing `*`), so they load as project rules on every start, resume and
-compaction without using hook space. The hook's packet then carries only
-coordination, plus the principles once when they have changed since the session
-loaded the file. Claude Code caps hook context at 10,000 characters, so the
-Claude hook never asks for more than 10,000 bytes.
+The session hook does not load these coordination records. It loads principles
+(see [Principles](#principles)) and, in a bound checkout, one summary line.
+`herma context` keeps its output above and is how a session reads the records
+when it judges they matter. The summary comes from
+`GET /v1/context?project_id=ID&format=summary`, which returns plain text: an
+empty body when the project has no open coordination, otherwise one line such as
 
-If the binding is in your home directory, Claude receives the principles in the
-hook context instead of a rules file. If the rules file cannot be updated, the
-hook context carries them marked as replacing it. Either way a warning explains
-why.
+```text
+herma coordination: Feedback 1 · Tasks 2 · Notes 3 (latest 2026-10-09) — read them with: herma context
+```
+
+Each part is a section heading and its record count, in context order. A trailing `+` means more
+records exist than the count shows, and a section of recent items adds the date
+of its latest record. The `principles` parameter of `GET /v1/context` accepts
+`include` or `omit` only.
 
 To stop using herma in a checkout, delete `.herma-project.json` and
 `.claude/rules/herma/`; an archived project's rules file is removed at the next
@@ -288,9 +291,44 @@ session start.
 Other projects, archived records and accepted knowledge are excluded by
 default. `context --include-durable` adds accepted knowledge after the
 principles; proposed, rejected and superseded records never enter context and are
-available through `get`, `list`, search and export. The automatic startup hook
-does not include knowledge: it carries the `recall` hint (and, for Codex or
-when they changed, principles), and `herma recall` finds the rest.
+available through `get`, `list`, search and export. The session hook does not
+include knowledge: `herma recall` finds it.
+
+## Principles
+
+Accepted principles are how sessions learn how you want agents to work. Global
+principles apply everywhere; a project's principles apply in its bound checkouts.
+
+`herma principles` prints the global accepted principles as markdown, and
+`herma principles --project ID` prints only that project's. The API serves the
+same text at `GET /v1/principles` and `GET /v1/principles?project_id=ID`. Tools
+without a hook can fetch them this way.
+
+The session hook keeps them in each client's standing instructions:
+
+- **Claude Code:** global principles in `~/.claude/rules/herma/global-principles.md`,
+  and a bound checkout's in `<checkout>/.claude/rules/herma/principles.md` (next to
+  a `.gitignore` containing `*`). Claude loads both as rules on every start,
+  resume and compaction without using hook space. Hook context repeats a set once
+  when it changed after the session loaded the file, and Claude's 10,000-character
+  hook cap is never exceeded. If a binding is in your home directory, its
+  principles arrive in hook context instead of a rules file. A file is written
+  only when `~/.claude` exists.
+- **Codex:** global principles in a block of `AGENTS.md` in the Codex home
+  (`$CODEX_HOME`, else `~/.codex`), written only when that folder exists. A bound
+  checkout's principles come inline in the hook context.
+
+The block is delimited by these two lines:
+
+```text
+<!-- herma:principles:start — generated; edit principles in herma -->
+<!-- herma:principles:end -->
+```
+
+herma rewrites only what is between them, and text outside the markers is never
+changed. If the markers are unpaired or repeated, herma leaves the file alone and
+warns; fix the file by hand. Do not edit generated files; change principles in
+herma and the next session start updates them.
 
 ## Recall
 
