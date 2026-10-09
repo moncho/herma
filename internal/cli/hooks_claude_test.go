@@ -260,3 +260,31 @@ func TestLegacyHookClampsTheOldDefault(t *testing.T) {
 		t.Fatalf("legacy context %d bytes, want at most %d", len(got.Context), claudeContextLimit)
 	}
 }
+
+// Inline project principles that do not fit must not point Claude at a rules
+// file herma never wrote (home binding) or could not update (unsafe path).
+func TestClaudeHookPointsOversizedInlinePrinciplesAtHermaPrinciples(t *testing.T) {
+	for name, setup := range map[string]func(t *testing.T, root string){
+		"home directory": func(t *testing.T, root string) { t.Setenv("HOME", root) },
+		"unwritable rules file": func(t *testing.T, root string) {
+			if err := os.Symlink(t.TempDir(), filepath.Join(root, ".claude")); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			db, p, root := claudeHookFixture(t, 0, nil)
+			setup(t, root)
+			for i := 0; i < 30; i++ {
+				reviewed(t, db, store.CreateInput{Kind: "principle", Title: "Rule " + strings.Repeat("x", i+1), Body: strings.Repeat("long ", 120), ProjectID: p.ID})
+			}
+			got := runSessionHook(t, root, "--client", "claude")
+			if len(got.Context) > claudeContextLimit {
+				t.Fatalf("context %d chars, over the cap", len(got.Context))
+			}
+			if !strings.Contains(got.Context, "## Project principles\nherma project principles are too long to repeat here; read them with: herma principles --project "+p.ID+" before relying on them.") || strings.Contains(got.Context, rules.Path) {
+				t.Fatalf("context:\n%s", got.Context)
+			}
+		})
+	}
+}
