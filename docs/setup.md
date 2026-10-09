@@ -95,26 +95,32 @@ its expected version, and leaves a handover note. It prints the record IDs and
 authenticated revision authors. Each run creates a new demo project. Restart
 persistence and competing edits are also exercised by the integration tests.
 
-## Load context automatically in each session
+## Load principles automatically in each session
 
-Create one herma project for the repository, then bind it from the repository root.
+Install the hook once per user. It runs in every folder, so you do not install
+it per repository or per worktree:
+
+```sh
+herma --identity local-agent hook install --client both
+```
+
+Use an agent identity; hook installation refuses the reviewer. It needs no
+binding. To also give a repository its own principles and a coordination
+summary, create one herma project for it and bind it from the repository root.
 Replace `PROJECT_ID` with the ID returned by the first command:
 
 ```sh
 herma create --kind project --title 'My repository' --status active
 herma project bind --project PROJECT_ID --max-bytes 10000
-herma --identity local-agent hook install --client both
 ```
 
-Use an agent identity; hook installation refuses the reviewer.
-
 The hook records the absolute paths of the herma executable and the credentials
-file. Install hooks using an installed executable, not `go run`: the hook must be
+file. Install the hook using an installed executable, not `go run`: the hook must be
 able to find the same executable in future sessions.
 
 Use `--client claude` or `--client codex` to install for one client. Installation
-merges a synchronous SessionStart hook into `.claude/settings.local.json` and/or
-`.codex/hooks.json`, preserving existing settings and other hooks. Repeating
+merges a synchronous SessionStart hook into `~/.claude/settings.json` and/or
+`~/.codex/hooks.json`, preserving existing settings and other hooks. Repeating
 installation updates herma's own hook without duplicating it. Each client's hook
 runs `herma hook session-start --client <client>`; rerun `herma hook install` after
 upgrading herma so existing hooks gain the flag. When upgrading, restart
@@ -123,45 +129,57 @@ talk to an older server. Bindings still at the old 12,288-byte default are
 clamped to 10,000 for Claude without a warning; other values above 10,000 warn
 on each session until lowered. Commands capture the
 executable, service URL and credential-file path, never a token. Keep these
-machine-specific hook files local; the generated `.herma-project.json` contains only
-the project ID and budget and can be committed for other sessions/worktrees.
+machine-specific hook files out of repositories; the generated `.herma-project.json`
+contains only the project ID and budget and can be committed for other
+sessions and worktrees.
 
-In Codex, review and trust the installed hook through `/hooks`; the project must
-also be trusted. This is Codex's normal hook setup requirement. Start a new
-session after installation. The hook runs on every SessionStart, including
-startup, resume, clear, compaction and Claude session forks. See the official
+`hook install --dir CHECKOUT` also removes herma's old project-level hook entries
+(`.claude/settings.local.json`, `.codex/hooks.json`) from that checkout, so a
+checkout set up before the user-level hook does not run herma twice. The Codex
+home is `$CODEX_HOME` when set, else `~/.codex`; `hook install` does not handle a
+`CODEX_HOME` other than `~/.codex`.
+
+In Codex, review and trust the installed hook once through `/hooks`. This is
+Codex's normal hook setup requirement. Start a new session after installation.
+The hook runs on every SessionStart, including startup, resume, clear,
+compaction and Claude session forks. See the official
 [Codex hook documentation](https://learn.chatgpt.com/docs/hooks) and
 [Claude Code hook documentation](https://code.claude.com/docs/en/hooks).
 
+In every folder the hook syncs your accepted global principles to the client's
+standing instructions: `~/.claude/rules/herma/global-principles.md` for Claude
+Code and a managed block in `AGENTS.md` in the Codex home. A client's file is
+written only when its home folder already exists. In a bound checkout it also
+adds that project's principles (Claude: `.claude/rules/herma/principles.md`;
+Codex: inline in the hook context) and one line counting open coordination
+records. It never loads task, feedback or note text. In an unbound folder it is
+silent unless global principles changed. See
+[principles](usage.md#principles) for the files.
+
 The hook discovers the nearest `.herma-project.json` using the session's actual
 working directory. Nested folders work; lookup stops at a Git repository or
-worktree boundary. Track the binding in each worktree where it is needed, and
-install local hooks there. An invalid nearby binding produces a warning instead
-of silently falling back. To change a binding, edit its project ID/budget
+worktree boundary. Track the binding in each worktree where it is needed; the
+hook itself is already installed. An invalid nearby binding produces a warning
+instead of silently falling back. To change a binding, edit its project ID/budget
 explicitly; `project bind` will not overwrite a different existing configuration.
 
-The Codex and legacy startup hooks only read. The Claude hook writes and removes
-only herma's generated `.claude/rules/herma/principles.md` (creating its `.gitignore`
-when absent). Every hook has a five-second request deadline and continues with a
-short warning if the service, credentials or binding are unavailable.
-Unbound projects are a quiet no-op. Token-based installs inherit `HERMA_TOKEN` from
-the agent environment and warn if it is missing, without falling back to another
-identity. Named-identity installs require `HERMA_TOKEN` to be unset. No MCP server
-is needed for this automatic loading path.
+The hook writes and removes only herma's generated rules files and the Codex
+block (the project rules file gets a `.gitignore` when absent). Every hook has a
+five-second request deadline and continues with a short warning if the service,
+credentials or a bound checkout's binding are unavailable. Token-based installs
+inherit `HERMA_TOKEN` from the agent environment and warn if it is missing,
+without falling back to another identity. Named-identity installs require
+`HERMA_TOKEN` to be unset. No MCP server is needed for this automatic loading
+path.
 
-Each session also gets the project's accepted principles: Claude loads them
-from the generated `.claude/rules/herma/principles.md`, and Codex receives them in
-the hook context. Both get a hint to use `herma recall` for other reviewed
-knowledge.
-
-After binding, `herma context` works without repeating the project ID. Context
-refreshes at session boundaries; run it again during a long session before
-coordinating an edit with another agent.
+Both clients also get a hint to use `herma recall` for other reviewed
+knowledge. After binding, `herma context` works without repeating the project ID;
+it prints the coordination records the summary line counts.
 
 ## Claude Code plugin
 
 In the Claude Code CLI, a plugin built into herma adds a herma status line and
-two read-only tools. The status line shows:
+two read-only tools. The status line shows, in every folder:
 
 | State | Text |
 | --- | --- |
@@ -173,15 +191,16 @@ two read-only tools. The status line shows:
 | `herma status` failed | `herma ✗` and the first line of the error |
 | Identity is a reviewer | `herma ✗ reviewer identity refused` |
 | Options not from user settings | `herma ✗ herma options must come from user settings` |
-| Not a bound checkout | nothing |
 
 Backup ages show as minutes under an hour, hours under two days, then days. The
 line refreshes at session start, every 60 seconds and after each herma tool call, and
-a toast appears when herma becomes unreachable or its backup turns stale.
+a toast appears when herma becomes unreachable, its backup turns stale, or the
+number of proposals to review rises (`herma: N new proposal(s) to review`).
 
 The tools are `mcp__herma__recall` (a query of up to 500 characters, up to 20
 results, optionally including proposals) and `mcp__herma__get` (one record by ID).
-They are registered only in a bound checkout when the identity is an agent. If
+They are registered only in a bound checkout when the identity is an agent,
+unlike the status line. If
 herma cannot be launched, the tool call returns an error.
 
 `herma hook install --client claude` (or `both`) installs the plugin after the
@@ -209,15 +228,15 @@ runs herma with exactly these options, clearing `HERMA_TOKEN`, `HERMA_IDENTITY`,
 agent identity and server you installed with. It shows an error instead of
 registering tools if that identity turns out to be a reviewer. It
 works only in the CLI: in the desktop app it shows `herma ✗` and offers no tools.
-Outside a bound checkout it stays silent.
+
 
 To remove it, delete the herma path from `env.CLAUDE_CODE_PLUGIN_DIRS`, the
 `pluginConfigs.herma` entry (with its four options `herma`, `credentials`, `identity`
 and `url`) and the two `mcp__herma__` rules from
 `~/.claude/settings.json`, and delete `~/.config/herma/plugins/claude`.
 
-The status line reads `herma status`, which you can also run yourself inside a
-bound checkout:
+The status line reads `herma status`, which you can also run yourself, in a
+bound checkout or not:
 
 ```sh
 herma status
@@ -240,7 +259,8 @@ herma status
 }
 ```
 
-Outside a bound checkout it prints `{"bound": false}`. With backups disabled,
+Outside a bound checkout it reports the same fields with `"bound": false` and no
+`project_id`. With backups disabled,
 `backup` is `{"enabled": false}`; before the first successful backup,
 `age_seconds` and `last_success_at` are absent.
 

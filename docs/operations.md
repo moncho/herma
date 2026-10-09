@@ -29,8 +29,8 @@ but cannot reliably stop a process from connecting to the socket.
 ## Remote clients
 
 A machine that reaches the server through the tunnel gets what the server
-machine gets, except reviewing: session context, the generated principles file
-and, in the Claude Code CLI, the plugin's status line and tools. Give each
+machine gets, except reviewing: your principles in each session, the
+coordination summary and, in the Claude Code CLI, the plugin's status line and tools. Give each
 machine its own identity and a client credentials file holding only that
 identity:
 
@@ -44,17 +44,18 @@ cannot hold a reviewer. Move it privately to the other machine's data folder as
 `~/.config/herma/credentials.json` with the same permissions, and delete the
 copy on the server machine. On the other machine, install herma (`make install`
 in a checkout, or `go install github.com/moncho/herma/cmd/herma@latest`), then
-bind each repository and install the hooks from its root, naming the tunnel URL:
+install the hook once and bind each repository from its root, naming the tunnel URL:
 
 ```sh
-herma --url https://herma.example.ts.net --identity laptop project bind --project PROJECT_ID
 herma --url https://herma.example.ts.net --identity laptop hook install --client claude
+herma --url https://herma.example.ts.net --identity laptop project bind --project PROJECT_ID
 ```
 
-The hooks and the plugin record the installed binary's absolute path. To end a
+The hook and the plugin record the installed binary's absolute path. To end a
 machine's access, run `herma identity revoke laptop` on the server. Sessions
 that cannot keep a file, such as cloud sessions, use `HERMA_URL` and
-`HERMA_TOKEN` instead; they get session context but not the plugin.
+`HERMA_TOKEN` instead; they get session context but not the plugin. `hook install` only handles
+a Codex home of `~/.codex`, not another `CODEX_HOME`.
 
 The server can run on any machine with a local disk. To move it, stop the
 service, [restore](#backups-and-restore) the newest snapshot into the new
