@@ -365,7 +365,7 @@ func TestInstallWritesEachClientsCommandAndUpgradesV1(t *testing.T) {
 func TestInstallUserWritesUserLevelFiles(t *testing.T) {
 	home := t.TempDir()
 	command := commandForTest(t, "claude-agent")
-	installed, err := InstallUser(home, "both", sameCommand(command))
+	installed, err := InstallUser(home, "both", sameCommand(command), false)
 	if err != nil || len(installed) != 2 {
 		t.Fatalf("%v %v", installed, err)
 	}
@@ -378,9 +378,32 @@ func TestInstallUserWritesUserLevelFiles(t *testing.T) {
 			t.Fatalf("%s command %q", name, cmd)
 		}
 	}
-	again, err := InstallUser(home, "both", sameCommand(command))
+	again, err := InstallUser(home, "both", sameCommand(command), false)
 	if err != nil || again[0].Changed || again[1].Changed {
 		t.Fatalf("reinstall changed files: %v %v", again, err)
+	}
+}
+
+func TestInstallUserKeepsADifferentHookUnlessReplacing(t *testing.T) {
+	home := t.TempDir()
+	if _, err := InstallUser(home, "claude", sameCommand(commandForTest(t, "claude-agent")), false); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, ".claude", "settings.json")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := commandForTest(t, "local-agent")
+	if _, err := InstallUser(home, "claude", sameCommand(other), false); !errors.Is(err, ErrDiffers) {
+		t.Fatalf("err = %v, want ErrDiffers", err)
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(after, before) {
+		t.Fatalf("refused install changed the file: %s", after)
+	}
+	replaced, err := InstallUser(home, "claude", sameCommand(other), true)
+	if err != nil || !replaced[0].Changed {
+		t.Fatalf("replace: %v %v", replaced, err)
 	}
 }
 
@@ -444,5 +467,5 @@ func installProject(dir, client string, command func(client string) (string, err
 	default:
 		return nil, errors.New("hook client must be claude, codex, or both")
 	}
-	return install(dir, plans, command)
+	return install(dir, plans, command, true)
 }

@@ -29,8 +29,9 @@ var pluginTools = []string{"mcp__herma__recall", "mcp__herma__get"}
 
 // InstallUserPlugin merges the herma plugin into home/.claude/settings.json,
 // creating it if absent. Other settings are kept; the write is atomic and keeps
-// an existing file's permissions.
-func InstallUserPlugin(home string, p UserPlugin) (Installation, error) {
+// an existing file's permissions. Existing plugin options that differ are
+// replaced only when replace is set; otherwise it returns ErrDiffers.
+func InstallUserPlugin(home string, p UserPlugin, replace bool) (Installation, error) {
 	root, abs, err := openDirectory(home, "home directory")
 	if err != nil {
 		return Installation{}, err
@@ -42,7 +43,10 @@ func InstallUserPlugin(home string, p UserPlugin) (Installation, error) {
 	if err != nil {
 		return result, fmt.Errorf("inspect %s: %w", result.Path, err)
 	}
-	after, err := mergeUserPlugin(before, p, isHermaPlugin)
+	after, err := mergeUserPlugin(before, p, isHermaPlugin, replace)
+	if errors.Is(err, ErrDiffers) {
+		return result, fmt.Errorf("%s: %w", result.Path, err)
+	}
 	if err != nil {
 		return result, fmt.Errorf("invalid settings %s: %w", result.Path, err)
 	}
@@ -81,8 +85,9 @@ func InstallUserPlugin(home string, p UserPlugin) (Installation, error) {
 
 // mergeUserPlugin adds p to the settings in data. Plugin folders for which
 // replaced reports true, other copies of the herma plugin, are dropped so only
-// one loads.
-func mergeUserPlugin(data []byte, p UserPlugin, replaced func(dir string) bool) ([]byte, error) {
+// one loads. Options that differ from p are kept, with ErrDiffers, unless
+// replace is set.
+func mergeUserPlugin(data []byte, p UserPlugin, replaced func(dir string) bool, replace bool) ([]byte, error) {
 	settings, err := parseSettings(data)
 	if err != nil {
 		return nil, err
@@ -122,6 +127,17 @@ func mergeUserPlugin(data []byte, p UserPlugin, replaced func(dir string) bool) 
 	options.set("credentials", p.Credentials)
 	options.set("identity", p.Identity)
 	options.set("url", p.URL)
+	if raw, ok := entry.get("options"); ok && !replace {
+		old, ok := raw.(*object)
+		if !ok {
+			return nil, fmt.Errorf("pluginConfigs.%s.options must be a JSON object", pluginName)
+		}
+		for _, key := range options.keys {
+			if value, ok := old.get(key); ok && value != options.values[key] {
+				return nil, fmt.Errorf("%w: plugin option %s is %v, not %v", ErrDiffers, key, value, options.values[key])
+			}
+		}
+	}
 	entry.set("options", options)
 	configs.set(pluginName, entry)
 	settings.set("pluginConfigs", configs)

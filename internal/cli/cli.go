@@ -93,7 +93,7 @@ agents, accepted by the reviewer); real tasks stay in your issue tracker. Errors
 type config struct {
 	endpoint, credentials, identity, socket string
 	dir                                     string // data folder; see dataDir
-	identitySelected                        bool
+	identitySelected, urlSelected           bool
 }
 
 // dataDir returns the folder holding herma's credentials, database, socket and
@@ -154,9 +154,13 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return err
 	}
 	cfg.identitySelected = os.Getenv("HERMA_IDENTITY") != ""
+	cfg.urlSelected = os.Getenv("HERMA_URL") != ""
 	f.Visit(func(f *flag.Flag) {
-		if f.Name == "identity" {
+		switch f.Name {
+		case "identity":
 			cfg.identitySelected = true
+		case "url":
+			cfg.urlSelected = true
 		}
 	})
 	args = f.Args()

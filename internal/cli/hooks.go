@@ -106,9 +106,12 @@ func installHook(cfg config, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	installations, err := hooks.InstallUser(home, *agent, command)
+	// Without an explicit server and identity, the flag defaults would silently
+	// replace a working setup; keep it and say how to change it.
+	replace := cfg.urlSelected && cfg.identitySelected
+	installations, err := hooks.InstallUser(home, *agent, command, replace)
 	if err != nil {
-		return err
+		return differs(err)
 	}
 	result := map[string]any{
 		"installed": installations,
@@ -135,9 +138,9 @@ func installHook(cfg config, args []string, stdout, stderr io.Writer) error {
 		if os.Getenv("HERMA_TOKEN") != "" {
 			result["plugin"] = "skipped: the Claude Code plugin needs a credentials file, not HERMA_TOKEN"
 		} else {
-			installation, err := installClaudePlugin(executable, cfg)
+			installation, err := installClaudePlugin(executable, cfg, replace)
 			if err != nil {
-				return err
+				return differs(err)
 			}
 			result["plugin"] = installation
 		}
@@ -179,7 +182,7 @@ func projectClient(dir, home, client string) string {
 // folder and registers it in the user's settings, so every session loads
 // it; it stays silent where no checkout is bound. HERMA_CLAUDE_PLUGIN_DIR
 // registers that folder instead, for working on the plugin in a checkout.
-func installClaudePlugin(executable string, cfg config) (hooks.Installation, error) {
+func installClaudePlugin(executable string, cfg config, replace bool) (hooks.Installation, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return hooks.Installation{}, err
@@ -201,7 +204,15 @@ func installClaudePlugin(executable string, cfg config) (hooks.Installation, err
 	if err != nil {
 		return hooks.Installation{}, err
 	}
-	return hooks.InstallUserPlugin(home, hooks.UserPlugin{Dir: dir, Binary: executable, Credentials: credentials, Identity: cfg.identity, URL: cfg.endpoint})
+	return hooks.InstallUserPlugin(home, hooks.UserPlugin{Dir: dir, Binary: executable, Credentials: credentials, Identity: cfg.identity, URL: cfg.endpoint}, replace)
+}
+
+// differs adds to an ErrDiffers refusal how to replace the existing setup.
+func differs(err error) error {
+	if errors.Is(err, hooks.ErrDiffers) {
+		return fmt.Errorf("%w; nothing changed. To replace it, pass --url and --identity (or set HERMA_URL and HERMA_IDENTITY)", err)
+	}
+	return err
 }
 
 // A missing binding is a quiet no-op. Other failures are visible warnings but

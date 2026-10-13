@@ -131,7 +131,11 @@ able to find the same executable in future sessions.
 Use `--client claude` or `--client codex` to install for one client. Installation
 merges a synchronous SessionStart hook into `~/.claude/settings.json` and/or
 `~/.codex/hooks.json`, preserving existing settings and other hooks. Repeating
-installation updates herma's own hook without duplicating it. Each client's hook
+installation updates herma's own hook without duplicating it. If herma's hook or
+plugin options already name a different server, identity, credentials file or
+binary, installation changes nothing and says so, unless both the server and the
+identity were chosen (`--url` and `--identity`, or `HERMA_URL` and
+`HERMA_IDENTITY`); then it replaces them. Each client's hook
 runs `herma hook session-start --client <client>`; rerun `herma hook install` after
 upgrading herma so existing hooks gain the flag. For this release, upgrade the
 clients before the server: on every client machine install the new binary and

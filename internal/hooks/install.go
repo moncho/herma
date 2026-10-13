@@ -24,6 +24,10 @@ const (
 	maxConfigBytes = 2 << 20
 )
 
+// ErrDiffers reports an existing herma setup that the install would change
+// without having been asked to.
+var ErrDiffers = errors.New("herma is already set up with a different command or options")
+
 type Installation struct {
 	Client  string `json:"client"`
 	Path    string `json:"path"`
@@ -63,19 +67,20 @@ type plan struct {
 // command returns the safely quoted command (normally from QuoteCommand) for
 // each client. The stable shell-comment marker identifies only this
 // installer's own entry. Existing malformed JSON, duplicate keys, and symlink
-// destinations are errors. File replacements are individually atomic; a rare
-// commit failure may return already-completed installations alongside its
-// error.
-func InstallUser(home, client string, command func(client string) (string, error)) ([]Installation, error) {
+// destinations are errors. An existing managed hook with a different command
+// is replaced only when replace is set; otherwise InstallUser returns
+// ErrDiffers. File replacements are individually atomic; a rare commit
+// failure may return already-completed installations alongside its error.
+func InstallUser(home, client string, command func(client string) (string, error), replace bool) ([]Installation, error) {
 	claude := plan{client: "claude", path: filepath.Join(".claude", "settings.json")}
 	codex := plan{client: "codex", path: filepath.Join(".codex", "hooks.json")}
 	switch client {
 	case "claude":
-		return install(home, []plan{claude}, command)
+		return install(home, []plan{claude}, command, replace)
 	case "codex":
-		return install(home, []plan{codex}, command)
+		return install(home, []plan{codex}, command, replace)
 	case "both":
-		return install(home, []plan{claude, codex}, command)
+		return install(home, []plan{claude, codex}, command, replace)
 	}
 	return nil, errors.New("hook client must be claude, codex, or both")
 }
@@ -120,7 +125,7 @@ func RemoveProject(dir, client string) ([]Installation, error) {
 }
 
 // install merges the managed hook into each plan's file under dir.
-func install(dir string, plans []plan, command func(client string) (string, error)) ([]Installation, error) {
+func install(dir string, plans []plan, command func(client string) (string, error), replace bool) ([]Installation, error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, errors.New("project directory is required")
 	}
@@ -142,7 +147,10 @@ func install(dir string, plans []plan, command func(client string) (string, erro
 		if err != nil {
 			return nil, fmt.Errorf("inspect %s: %w", filepath.Join(abs, p.path), err)
 		}
-		p.after, err = merge(p.before, p.client, cmd+marker)
+		p.after, err = merge(p.before, p.client, cmd+marker, replace)
+		if errors.Is(err, ErrDiffers) {
+			return nil, fmt.Errorf("%s: %w", filepath.Join(abs, p.path), err)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("invalid hook configuration %s: %w", filepath.Join(abs, p.path), err)
 		}
@@ -358,7 +366,7 @@ func stage(root *os.Root, parent string, data []byte) (string, error) {
 	return name, nil
 }
 
-func merge(data []byte, client, command string) ([]byte, error) {
+func merge(data []byte, client, command string, replace bool) ([]byte, error) {
 	settings, err := parseSettings(data)
 	if err != nil {
 		return nil, err
@@ -432,6 +440,9 @@ func merge(data []byte, client, command string) ([]byte, error) {
 				if key != "type" && key != "command" && key != "timeout" && key != "async" && key != "additionalContextLimit" {
 					return nil, errors.New("managed herma hook has custom fields; remove its managed marker to preserve it separately")
 				}
+			}
+			if !replace && strings.TrimSuffix(strings.TrimSuffix(cmd, marker), legacyMarker) != strings.TrimSuffix(command, marker) {
+				return nil, fmt.Errorf("%w, running %s", ErrDiffers, cmd)
 			}
 			managed = index
 		}
