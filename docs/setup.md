@@ -222,6 +222,14 @@ They are registered only in a bound checkout when the identity is an agent,
 unlike the status line. If
 herma cannot be launched, the tool call returns an error.
 
+The plugin also carries the `/herma:review-principles` workflow. It reviews a
+diff (the current branch against the default branch plus uncommitted work, or
+the git range or PR reference given as its argument) against the accepted
+principles a code change can break, with one reviewer per changed file, then has
+one agent per finding try to refute it. It returns the findings that survive,
+the refuted ones with reasons, and any file or finding it could not check. It
+writes nothing to herma or GitHub.
+
 `herma hook install --client claude` (or `both`) installs the plugin after the
 hook. It writes the plugin built into herma to `plugins/claude` in the data folder,
 adds that folder to `env.CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json`

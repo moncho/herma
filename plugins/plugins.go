@@ -7,7 +7,7 @@ import (
 	"io/fs"
 )
 
-//go:embed claude/.claude-plugin/plugin.json claude/hooks/hooks.json claude/hooks/*.ts
+//go:embed claude/.claude-plugin/plugin.json claude/hooks/hooks.json claude/hooks/*.ts claude/workflows/*.js
 var files embed.FS
 
 // Claude returns the Claude Code plugin's files, rooted at the plugin folder.

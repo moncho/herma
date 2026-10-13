@@ -602,7 +602,7 @@ func TestHookInstallRegistersClaudePluginUserWide(t *testing.T) {
 	if err != nil || !strings.Contains(string(data), builtin) || strings.Contains(string(data), override) {
 		t.Fatalf("built-in plugin not registered: %s %v", data, err)
 	}
-	for _, file := range []string{".claude-plugin/plugin.json", "hooks/hooks.json", "hooks/register.ts"} {
+	for _, file := range []string{".claude-plugin/plugin.json", "hooks/hooks.json", "hooks/register.ts", "workflows/review-principles.js"} {
 		if _, err := os.Stat(filepath.Join(builtin, file)); err != nil {
 			t.Errorf("built-in plugin lacks %s: %v", file, err)
 		}

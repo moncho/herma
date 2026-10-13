@@ -1,7 +1,7 @@
 {
   "name": "herma",
   "version": "0.1.0",
-  "description": "herma status line and read-only mcp__herma__recall/mcp__herma__get tools for bound checkouts",
+  "description": "herma status line, read-only mcp__herma__recall/mcp__herma__get tools for bound checkouts, and the review-principles workflow",
   "userConfig": {
     "herma": { "type": "string", "title": "herma binary", "description": "Absolute path of the herma binary", "required": true },
     "credentials": { "type": "string", "title": "Credentials file", "description": "Absolute path of the agent credentials file", "required": true },
