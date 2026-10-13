@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -326,6 +327,52 @@ func TestHookInstallWarnsWhenProjectHookRemovalFails(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".claude", "settings.json")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHookInstallKeepsTheExistingServerUnlessChosen(t *testing.T) {
+	cleanEnv(t)
+	credentials := filepath.Join(t.TempDir(), "credentials.json")
+	if err := os.WriteFile(credentials, []byte(`{"local-agent":{"token":"agent-token-that-is-long-enough-for-herma","role":"agent"},"session-a":{"token":"agent-token-that-is-long-enough-for-herma-a","role":"agent"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	remote := "https://herma.example.net"
+	if _, err := runCLI(t, "--url", remote, "--credentials", credentials, "--identity", "session-a", "hook", "install", "--client", "both"); err != nil {
+		t.Fatal(err)
+	}
+	read := func() string {
+		var all string
+		for _, relative := range []string{".claude/settings.json", ".codex/hooks.json"} {
+			data, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), relative))
+			if err != nil {
+				t.Fatal(err)
+			}
+			all += string(data)
+		}
+		return all
+	}
+	before := read()
+	for _, args := range [][]string{
+		{"--credentials", credentials, "hook", "install", "--client", "claude"},
+		{"--credentials", credentials, "--identity", "session-a", "hook", "install", "--client", "codex"},
+	} {
+		if _, err := runCLI(t, args...); err == nil || !errors.Is(err, hooks.ErrDiffers) || !strings.Contains(err.Error(), "--url and --identity") {
+			t.Fatalf("%v: err = %v, want a refusal naming --url and --identity", args, err)
+		}
+		if read() != before {
+			t.Fatalf("%v: refused install changed settings", args)
+		}
+	}
+	if _, err := runCLI(t, "--credentials", credentials, "--identity", "session-a", "--url", remote, "hook", "install", "--client", "both"); err != nil {
+		t.Fatalf("reinstall with the same choices: %v", err)
+	}
+	t.Setenv("HERMA_URL", "http://127.0.0.1:8765")
+	t.Setenv("HERMA_IDENTITY", "local-agent")
+	if _, err := runCLI(t, "--credentials", credentials, "hook", "install", "--client", "both"); err != nil {
+		t.Fatalf("explicit replacement: %v", err)
+	}
+	if after := read(); strings.Contains(after, remote) || !strings.Contains(after, "local-agent") {
+		t.Fatalf("settings not replaced: %s", after)
 	}
 }
 

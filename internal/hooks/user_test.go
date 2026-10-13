@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,7 +21,7 @@ func decodeSettings(t *testing.T, data []byte) map[string]any {
 }
 
 func TestMergeUserPluginIntoEmptySettings(t *testing.T) {
-	data, err := mergeUserPlugin(nil, testPlugin, notHerma)
+	data, err := mergeUserPlugin(nil, testPlugin, notHerma, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +48,7 @@ func TestMergeUserPluginKeepsOtherDirs(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			in := `{"env":{"CLAUDE_CODE_PLUGIN_DIRS":` + strconvQuote(existing) + `,"OTHER":"1"}}`
-			data, err := mergeUserPlugin([]byte(in), testPlugin, notHerma)
+			data, err := mergeUserPlugin([]byte(in), testPlugin, notHerma, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -77,7 +78,7 @@ func notHerma(string) bool { return false }
 func TestMergeUserPluginReplacesOtherHermaPluginDirs(t *testing.T) {
 	sep := string(os.PathListSeparator)
 	in := `{"env":{"CLAUDE_CODE_PLUGIN_DIRS":"/a` + sep + `/old/herma/plugins/claude` + sep + `/b"}}`
-	data, err := mergeUserPlugin([]byte(in), testPlugin, func(dir string) bool { return dir == "/old/herma/plugins/claude" })
+	data, err := mergeUserPlugin([]byte(in), testPlugin, func(dir string) bool { return dir == "/old/herma/plugins/claude" }, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,11 +112,11 @@ func strconvQuote(s string) string { b, _ := json.Marshal(s); return string(b) }
 
 func TestMergeUserPluginPreservesUnrelatedSettingsAndIsIdempotent(t *testing.T) {
 	in := `{"model":"opus","permissions":{"allow":["Bash(ls)"],"deny":["Read(//x)"]},"pluginConfigs":{"other":{"options":{"a":1}}},"hooks":{"Stop":[]}}`
-	once, err := mergeUserPlugin([]byte(in), testPlugin, notHerma)
+	once, err := mergeUserPlugin([]byte(in), testPlugin, notHerma, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	twice, err := mergeUserPlugin(once, testPlugin, notHerma)
+	twice, err := mergeUserPlugin(once, testPlugin, notHerma, false)
 	if err != nil || string(once) != string(twice) {
 		t.Fatalf("not idempotent:\n%s\n%s", once, twice)
 	}
@@ -141,10 +142,35 @@ func TestMergeUserPluginRejectsWrongTypes(t *testing.T) {
 		"not json":           `{`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := mergeUserPlugin([]byte(in), testPlugin, notHerma); err == nil {
+			if _, err := mergeUserPlugin([]byte(in), testPlugin, notHerma, false); err == nil {
 				t.Fatal("accepted")
 			}
 		})
+	}
+}
+
+func TestMergeUserPluginKeepsDifferentOptionsUnlessReplacing(t *testing.T) {
+	in, err := mergeUserPlugin(nil, testPlugin, notHerma, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := testPlugin
+	other.URL = "https://herma.example.net"
+	if _, err := mergeUserPlugin(in, other, notHerma, false); !errors.Is(err, ErrDiffers) || !strings.Contains(err.Error(), "url") {
+		t.Fatalf("err = %v, want ErrDiffers naming url", err)
+	}
+	out, err := mergeUserPlugin(in, other, notHerma, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := decodeSettings(t, out)["pluginConfigs"].(map[string]any)["herma"].(map[string]any)["options"].(map[string]any)
+	if options["url"] != other.URL {
+		t.Fatalf("options = %v", options)
+	}
+	// An option an older install did not write is added, not a difference.
+	older := `{"pluginConfigs":{"herma":{"options":{"herma":"/repo/herma/bin/herma","credentials":"/repo/herma/.herma/credentials.json","identity":"local-agent"}}}}`
+	if _, err := mergeUserPlugin([]byte(older), testPlugin, notHerma, false); err != nil {
+		t.Fatalf("missing option treated as different: %v", err)
 	}
 }
 
@@ -157,7 +183,7 @@ func TestInstallUserPluginWritesAtomicallyAndKeepsMode(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"model":"opus"}`), 0644); err != nil {
 		t.Fatal(err)
 	}
-	first, err := InstallUserPlugin(home, testPlugin)
+	first, err := InstallUserPlugin(home, testPlugin, false)
 	if err != nil || !first.Changed || first.Path != path {
 		t.Fatalf("%+v %v", first, err)
 	}
@@ -165,12 +191,12 @@ func TestInstallUserPluginWritesAtomicallyAndKeepsMode(t *testing.T) {
 	if info.Mode().Perm() != 0644 {
 		t.Fatalf("mode = %v", info.Mode().Perm())
 	}
-	second, err := InstallUserPlugin(home, testPlugin)
+	second, err := InstallUserPlugin(home, testPlugin, false)
 	if err != nil || second.Changed {
 		t.Fatalf("second: %+v %v", second, err)
 	}
 	empty := t.TempDir()
-	created, err := InstallUserPlugin(empty, testPlugin)
+	created, err := InstallUserPlugin(empty, testPlugin, false)
 	if err != nil || !created.Changed {
 		t.Fatalf("create: %+v %v", created, err)
 	}
@@ -180,7 +206,7 @@ func TestInstallUserPluginWritesAtomicallyAndKeepsMode(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"env":[]}`), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := InstallUserPlugin(home, testPlugin); err == nil {
+	if _, err := InstallUserPlugin(home, testPlugin, false); err == nil {
 		t.Fatal("wrong type accepted")
 	}
 	if data, _ := os.ReadFile(path); string(data) != `{"env":[]}` {
