@@ -44,7 +44,7 @@ func TestReviewListsProposedDurableRecordsWithPagination(t *testing.T) {
 			t.Fatalf("%v: %v", args, err)
 		}
 	}
-	data, err := runCLI(t, "review")
+	data, err := runCLI(t, "review", "--format", "json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestReviewListsProposedDurableRecordsWithPagination(t *testing.T) {
 			t.Fatalf("queue contains %s record %s", item.Status, item.Title)
 		}
 	}
-	data, err = runCLI(t, "review", "--limit", "1", "--offset", "1")
+	data, err = runCLI(t, "review", "--format", "json", "--limit", "1", "--offset", "1")
 	if err != nil {
 		t.Fatalf("paged review: %s %v", data, err)
 	}

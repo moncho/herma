@@ -20,8 +20,12 @@ func review(ctx context.Context, cfg config, args []string, stdout, stderr io.Wr
 	fs := flags("review", stderr)
 	limit := fs.Int("limit", 50, "maximum records per kind (1–200)")
 	offset := fs.Int("offset", 0, "number of records to skip per kind")
+	format := fs.String("format", "text", "text (readable) or json")
 	if err := parse(fs, args); err != nil {
 		return err
+	}
+	if *format != "text" && *format != "json" {
+		return errors.New("review --format must be text or json")
 	}
 	if *limit < 1 || *limit > 200 || *offset < 0 {
 		return errors.New("--limit must be 1–200 and --offset must be nonnegative")
@@ -54,7 +58,10 @@ func review(ctx context.Context, cfg config, args []string, stdout, stderr io.Wr
 		return err
 	}
 	queue["pending_kind_changes"] = data
-	return output(stdout, queue)
+	if *format == "json" {
+		return output(stdout, queue)
+	}
+	return reviewText(ctx, c, stdout, queue, pending, *offset)
 }
 
 // pendingKindChanges lists accepted and retired kinds whose definition change

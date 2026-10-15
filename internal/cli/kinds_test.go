@@ -38,7 +38,7 @@ func cliRecord(t *testing.T, args ...string) store.Record {
 // pending_kind_changes.
 func pendingKindChange(t *testing.T, id string) bool {
 	t.Helper()
-	data, err := runCLI(t, "review")
+	data, err := runCLI(t, "review", "--format", "json")
 	if err != nil {
 		t.Fatalf("review: %s %v", data, err)
 	}
@@ -63,7 +63,7 @@ func TestCustomKindWorkflow(t *testing.T) {
 	if kind.Status != "proposed" || kind.Kind != "kind" {
 		t.Fatalf("proposed: %+v", kind)
 	}
-	queue, err := runCLI(t, "review")
+	queue, err := runCLI(t, "review", "--format", "json")
 	if err != nil || !strings.Contains(string(queue), kind.ID) {
 		t.Fatalf("review queue: %s %v", queue, err)
 	}

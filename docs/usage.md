@@ -40,6 +40,12 @@ herma --identity owner accept NEW_ID --replaces OLD_ID
 herma --identity owner accept --all
 ```
 
+`herma review` prints each proposal for reading: its ID, project (by name, or
+`global`), author and date, then the title, the full body and the sources, grouped
+under Principles, Knowledge, Kinds and Pending kind changes. A line counts what
+`--limit` left out. Any identity can run it; `--format json` prints the raw lists
+instead.
+
 `accept` reads each record's current version itself and reports every record
 under `accepted`, `superseded` or `failed`; one failure does not stop the
 others, but the command exits nonzero. `--replaces` marks the old record
@@ -49,8 +55,9 @@ changes still need `update KIND_ID --version N --accept-pending`. Rejecting, or
 any other status, uses `update` with `--version`.
 
 Kind definitions follow `proposed`, `accepted`, `retired`, and only the reviewer
-moves them (see Custom kinds). `herma review` lists proposed kinds under `kinds` and
-accepted kinds with a pending change under `pending_kind_changes`.
+moves them (see Custom kinds). `herma review` lists proposed kinds under Kinds and
+accepted kinds with a pending change under Pending kind changes (`kinds` and
+`pending_kind_changes` in `--format json`).
 
 Accepting requires at least one `--sources` entry. The server records
 `reviewed_by` and `reviewed_at`. Agents cannot change accepted, rejected or

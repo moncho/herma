@@ -64,7 +64,8 @@ Commands:
   hook install --client claude|codex|both [--dir CHECKOUT]   Install the user-level session hook; also removes the old project-level hook from --dir (default: current folder)
   hook session-start [--client claude|codex]
                                SessionStart hook: principles in every folder, plus an index of open work and knowledge in bound checkouts
-  review [--limit N] [--offset N]  List proposed knowledge, principles and kinds, and pending kind changes
+  review [--limit N] [--offset N] [--format text|json]
+                               Proposed knowledge, principles and kinds, and pending kind changes, for reading
   accept ID [ID ...] | accept NEW --replaces OLD | accept --all
                                Reviewer: accept proposals at their current version; --replaces
                                supersedes OLD after NEW is accepted
