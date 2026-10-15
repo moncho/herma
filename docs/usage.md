@@ -5,7 +5,7 @@
 | Kind | Purpose | Statuses, with the default first |
 | --- | --- | --- |
 | `project` | Repository or shared session coordination scope | `planned`, `active`, `paused`, `completed` |
-| `task` | Session working intent, ownership and blockers; link the real issue | `open`, `in_progress`, `blocked`, `done` |
+| `task` | The state of a long-running effort or a session's working intent: done, open, next and blockers; link the real issue | `open`, `in_progress`, `blocked`, `done` |
 | `note` | An immutable handoff: changes, checks, next action and references | `published` |
 | `feedback` | Unresolved coordination friction or blocker | `open`, `triaged`, `resolved` |
 | `knowledge` | Durable knowledge; reviewed before it counts | `proposed`, `accepted`, `rejected`, `superseded` |
@@ -278,12 +278,25 @@ Principles come first and may use at most half of the budget; coordination gets
 whatever they leave. Each record preview uses at most 2 KiB or a quarter of the
 budget, whichever is smaller.
 
-The session hook does not load these coordination records. It loads principles
-(see [Principles](#principles)) and, in a bound checkout, one summary line.
-`herma context` keeps its output above and is how a session reads the records
-when it judges they matter. The summary comes from
-`GET /v1/context?project_id=ID&format=summary`, which returns plain text: an
-empty body when the project has no open coordination, otherwise one line such as
+The session hook does not load these records' bodies. It loads principles
+(see [Principles](#principles)) and, in a bound checkout, an index from
+`GET /v1/context?project_id=ID&format=index`: plain text with the titles and IDs
+of open tasks and accepted knowledge, newest first, and counts of the other
+sections. It is empty when nothing applies and at most 4,000 bytes; a closing
+`Not shown:` line counts what did not fit.
+
+```text
+herma index · My repository · read one with mcp__herma__get or: herma get ID
+Open work (unreviewed, kept by agents):
+- rec_… · in_progress · 2026-10-14 · Events API v2
+Knowledge (reviewed):
+- rec_… · Spanner FORMAT_TIMESTAMP defaults to America/Los_Angeles
+Also in herma: Notes 3 (latest 2026-10-09) — read them with: herma context
+```
+
+A session opens a record with `herma get ID`, and reads the full packet with
+`herma context` when it judges it matters. Against an older server the hook
+falls back to `format=summary`, which returns one line of counts such as
 
 ```text
 herma coordination: Feedback 1 · Tasks 2 · Notes 3 (latest 2026-10-09) — read them with: herma context

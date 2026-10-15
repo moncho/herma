@@ -61,7 +61,7 @@ func TestCodexHookWritesTheManagedBlockInAnUnboundFolder(t *testing.T) {
 	}
 }
 
-func TestBoundHookLoadsPrinciplesAndCountsButNoRecords(t *testing.T) {
+func TestBoundHookLoadsPrinciplesAndTheIndex(t *testing.T) {
 	db, p, root := claudeHookFixture(t, 0, nil)
 	home := withClaudeHome(t)
 	reviewed(t, db, store.CreateInput{Kind: "principle", Title: "Everywhere"})
@@ -74,11 +74,11 @@ func TestBoundHookLoadsPrinciplesAndCountsButNoRecords(t *testing.T) {
 	if !strings.Contains(string(project), "Here only") || strings.Contains(string(project), "Everywhere") || !strings.Contains(string(global), "Everywhere") {
 		t.Fatalf("project:\n%s\nglobal:\n%s", project, global)
 	}
-	if !strings.Contains(got.Context, "herma coordination: Tasks 1 · Notes 1") || strings.Contains(got.Context, "Secret") {
+	if !strings.Contains(got.Context, "Secret task text") || !strings.Contains(got.Context, "Also in herma: Notes 1") || strings.Contains(got.Context, "Secret handoff") {
 		t.Fatalf("context:\n%s", got.Context)
 	}
 	codex := runSessionHook(t, root, "--client", "codex")
-	if !strings.Contains(codex.Context, "## Project principles\n") || !strings.Contains(codex.Context, "Here only") || strings.Contains(codex.Context, "Secret") {
+	if !strings.Contains(codex.Context, "## Project principles\n") || !strings.Contains(codex.Context, "Here only") || strings.Contains(codex.Context, "Secret handoff") {
 		t.Fatalf("codex context:\n%s", codex.Context)
 	}
 }
@@ -102,7 +102,7 @@ func TestOldServerLeavesGlobalFilesAndWarnsOnlyWhenBound(t *testing.T) {
 	old := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			q := r.URL.Query()
-			if (r.URL.Path == "/v1/principles" && q.Get("project_id") == "") || q.Get("format") == "summary" {
+			if (r.URL.Path == "/v1/principles" && q.Get("project_id") == "") || q.Get("format") == "summary" || q.Get("format") == "index" {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = w.Write([]byte(`{"error":{"code":"invalid_request","message":"project_id is required"}}`))
@@ -156,7 +156,7 @@ func TestUnwritableGlobalFileWarnsOnlyWhenBound(t *testing.T) {
 		t.Fatalf("unbound must stay silent: %s", data)
 	}
 	bound := runSessionHook(t, root, "--client", "claude")
-	if !strings.Contains(bound.Message, "could not update "+filepath.Join(home, rules.GlobalPath)) || !strings.Contains(bound.Context, "herma coordination: Tasks 1") || strings.Contains(bound.Context, "Global principles") {
+	if !strings.Contains(bound.Message, "could not update "+filepath.Join(home, rules.GlobalPath)) || !strings.Contains(bound.Context, "herma index · ") || strings.Contains(bound.Context, "Global principles") {
 		t.Fatalf("bound: %+v", bound)
 	}
 }

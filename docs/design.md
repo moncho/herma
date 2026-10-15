@@ -22,12 +22,12 @@ merges client hook configurations while preserving other settings.
 The product scope is memory that shapes agent behavior: principles first,
 reviewed knowledge second. Agents propose principle and knowledge records and the
 reviewer accepts them; the issue tracker owns real tasks. herma also holds
-coordination records that agents may use freely: task records describe
-temporary session working intent, ownership and blockers with source links, and
-notes describe handoffs. Agents pull them with `herma context` when they judge it
-helps. Session start loads only reviewed principles and a one-line count of the
-coordination records; knowledge is found with `herma recall` or
-`--include-durable`.
+coordination records that agents may use freely: task records hold the state
+of long-running work and session working intent, ownership and blockers with
+source links, and notes describe handoffs. Session start loads reviewed
+principles as standing instructions and, in bound checkouts, an index of the
+titles of open tasks and accepted knowledge; bodies are pulled with `herma get`,
+`herma context` or `herma recall` when an agent judges they help.
 
 Only reviewed principles are meant to shape behavior, and agents copy what they
 see in context, so unreviewed records are never delivered as standing
@@ -86,8 +86,8 @@ when the file changes; an invalid file keeps the previous identities.
   `json_extract`; indexes cover the kind and kind names, not individual fields,
   so a query scans one kind's rows.
 - One user-level SessionStart hook per client runs in every folder in Claude Code
-  and Codex. It syncs principles to the instruction files, adds the coordination
-  summary in bound checkouts, refreshes at session boundaries, and fails open
+  and Codex. It syncs principles to the instruction files, adds the index of open
+  work and knowledge in bound checkouts, refreshes at session boundaries, and fails open
   after a short deadline. It does not write a handoff automatically or watch
   other sessions.
 - No automatic ingestion, orchestration, issue-tracker synchronization, job

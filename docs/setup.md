@@ -141,8 +141,8 @@ upgrading herma so existing hooks gain the flag. For this release, upgrade the
 clients before the server: on every client machine install the new binary and
 rerun `herma hook install`, then restart `herma serve` on the new binary. An old
 client talking to a new server gets only project principles and loses the global
-ones; a new client talking to an old server only lacks the coordination summary
-line. The hook loads no record text, so it ignores the binding's `max_bytes`;
+ones; a new client talking to an old server shows the coordination count line
+instead of the index. The hook loads only titles, within its own 4,000-byte index, so it ignores the binding's `max_bytes`;
 that budget applies to `herma context`. Commands capture the
 executable, service URL and credential-file path, never a token. Keep these
 machine-specific hook files out of repositories; the generated `.herma-project.json`
@@ -170,8 +170,8 @@ standing instructions: `~/.claude/rules/herma/global-principles.md` for Claude
 Code and a managed block in `AGENTS.md` in the Codex home. A client's file is
 written only when its home folder already exists. In a bound checkout it also
 adds that project's principles (Claude: `.claude/rules/herma/principles.md`;
-Codex: inline in the hook context) and one line counting open coordination
-records. It never loads task, feedback or note text. In an unbound folder it is
+Codex: inline in the hook context) and an index of the titles of open tasks and
+accepted knowledge. It never loads record bodies. In an unbound folder it is
 silent unless global principles changed. See
 [principles](usage.md#principles) for the files.
 
@@ -193,7 +193,7 @@ path.
 
 Both clients also get a hint to use `herma recall` for other reviewed
 knowledge. After binding, `herma context` works without repeating the project ID;
-it prints the coordination records the summary line counts.
+it prints the coordination records the index names and counts.
 
 ## Claude Code plugin
 

@@ -274,9 +274,13 @@ func sessionStart(ctx context.Context, cfg config, requireToken bool, client str
 	if err != nil {
 		return hookWarning(stdout, "herma context unavailable: check the service (restart herma serve after upgrading herma) and credentials with herma context from this repository. Session startup will continue.")
 	}
-	summary := coordinationSummary(ctx, cfg, binding.ProjectID)
+	summary := coordinationIndex(ctx, cfg, binding.ProjectID)
 	if client == "claude" {
 		fits := func() bool { return len(joinSections(global, projectSection, summary)) <= claudeContextLimit }
+		// Reviewed principles outrank the index: it shrinks to the count line first.
+		if !fits() && strings.HasPrefix(summary, "herma index · ") {
+			summary = coordinationSummary(ctx, cfg, binding.ProjectID)
+		}
 		if !fits() && global != "" {
 			global = tooLongNote("Global", globalPath)
 		}
@@ -452,6 +456,32 @@ func projectPrinciples(ctx context.Context, cfg config, agent string, binding pr
 	}
 	return principlesSection("Project", path, data), tooLongNote("Project", path), warnings, nil
 }
+
+// coordinationIndex is the session-start index of open work and accepted
+// knowledge. A server that cannot render it, or answers with anything but
+// an index, gets today's count line instead, so session start never loads
+// record bodies.
+func coordinationIndex(ctx context.Context, cfg config, projectID string) string {
+	c, err := cfg.client()
+	if err != nil {
+		return ""
+	}
+	data, err := c.Text(ctx, "/v1/context", url.Values{"project_id": {projectID}, "format": {"index"}})
+	if err != nil {
+		return coordinationSummary(ctx, cfg, projectID)
+	}
+	text := string(data)
+	if text == "" {
+		return ""
+	}
+	if !strings.HasPrefix(text, "herma index · ") || !strings.HasSuffix(text, "\n") || len(text) > indexMaxBytes {
+		return coordinationSummary(ctx, cfg, projectID)
+	}
+	return text
+}
+
+// indexMaxBytes matches the server's index cap.
+const indexMaxBytes = 4000
 
 // coordinationSummary is the one-line count of open coordination, or "" when
 // there is none or the server cannot produce it. Anything else, such as a

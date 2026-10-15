@@ -24,6 +24,16 @@ func (h *Handler) contextSummary(w http.ResponseWriter, r *http.Request, project
 
 // renderSummary lists each section that has records, by tier then heading.
 func renderSummary(sections []snapshotSection) string {
+	parts := summaryParts(sections)
+	if len(parts) == 0 {
+		return ""
+	}
+	return "herma coordination: " + strings.Join(parts, " · ") + " — read them with: herma context\n"
+}
+
+// summaryParts renders "Heading N[+] [(latest DATE)]" for each section with
+// records, by tier then heading.
+func summaryParts(sections []snapshotSection) []string {
 	sorted := append([]snapshotSection{}, sections...)
 	sort.SliceStable(sorted, func(i, j int) bool {
 		if sorted[i].Tier != sorted[j].Tier {
@@ -45,8 +55,5 @@ func renderSummary(sections []snapshotSection) string {
 		}
 		parts = append(parts, part)
 	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return "herma coordination: " + strings.Join(parts, " · ") + " — read them with: herma context\n"
+	return parts
 }

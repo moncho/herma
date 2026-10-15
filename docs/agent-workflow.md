@@ -25,7 +25,7 @@ herma --identity <codex-identity> hook install --client codex
 
 The hook runs in every folder. It keeps your global principles current in each
 client's instruction files, so every session loads them. To give a repository
-its own principles and a coordination summary, create or choose one herma
+its own principles and the session index, create or choose one herma
 project and bind the checkout to it from the repository root:
 
 ```sh
@@ -76,16 +76,18 @@ compaction and Claude session forks. It reads only (apart from the principles
 files),
 uses a five-second request deadline, and allows the session to continue with a
 short warning if the service or credentials are unavailable. In a bound
-checkout it supplies the project's principles and one line counting open
-coordination records; it never loads task, feedback or note text. In an unbound
+checkout it supplies the project's principles and an index of the titles of
+open tasks and accepted knowledge, with counts of notes and feedback; it never
+loads record bodies. In an unbound
 folder it loads only global principles and stays silent otherwise. The hook does
 not create working-intent records or handoffs; agents record those explicitly
 when useful.
 
 ## Start or refresh a session
 
-The hook's summary line says coordination records exist but not what they say.
-Read them with `herma context` before coordinating overlapping work, and again
+The hook's index names open work and knowledge but does not say what they hold.
+Open a record with `herma get ID` when its title is relevant, and read the full
+packet with `herma context` before coordinating overlapping work, and again
 during a long session, from anywhere inside the bound checkout:
 
 ```sh
@@ -121,9 +123,12 @@ awaits review. Never create a second kind for the same purpose.
 
 ## Announce working intent
 
-Create a coordination record when another session needs to know your scope,
-ownership or blocker. A `task` in herma describes that session activity; it is not a
-second backlog. Use the real issue URL in `sources`. Run it from the bound
+Keep the state of long-running work in one `task` per effort: its body says
+what is done, what is open and what is next. Update it as the work moves and set
+it to `done` when the effort ends; a later session finds it in the index. Also
+create a task when another session needs to know your scope, ownership or
+blocker. Whether an issue is open or closed stays in your issue tracker; use
+the real issue URL in `sources`. Run it from the bound
 checkout: tasks and notes take the binding's project unless you pass `--project`.
 
 ```sh

@@ -99,10 +99,10 @@ func TestBoundContextAndSessionStartLoadFreshCoordination(t *testing.T) {
 		}
 	}
 	check(runInput(t, context.Background(), "", "context", "--format", "json"))
-	// Session start loads only counts; the records stay behind herma context.
+	// Session start loads titles of open work; bodies stay behind herma context.
 	for _, client := range []string{"claude", "codex"} {
 		got := runSessionHook(t, nested, "--client", client)
-		if !strings.HasPrefix(got.Context, "herma coordination: Tasks 1 · Notes 1 (latest ") || strings.Contains(got.Context, "Session A") || strings.Contains(got.Context, "handoff") || strings.Contains(got.Context, "Durable") {
+		if !strings.HasPrefix(got.Context, "herma index · ") || !strings.Contains(got.Context, "Also in herma: Notes 1 (latest ") || !strings.Contains(got.Context, "Durable wiki fact") || strings.Contains(got.Context, "handoff") || strings.Contains(got.Context, "EX-123") {
 			t.Fatalf("%s session start: %+v", client, got)
 		}
 	}

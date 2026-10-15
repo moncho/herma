@@ -30,7 +30,7 @@ but cannot reliably stop a process from connecting to the socket.
 
 A machine that reaches the server through the tunnel gets what the server
 machine gets, except reviewing: your principles in each session, the
-coordination summary and, in the Claude Code CLI, the plugin's status line and tools. Give each
+session index and, in the Claude Code CLI, the plugin's status line and tools. Give each
 machine its own identity and a client credentials file holding only that
 identity:
 
