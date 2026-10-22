@@ -66,6 +66,7 @@ Commands:
                                SessionStart hook: principles in every folder, plus an index of open work and knowledge in bound checkouts
   review [--limit N] [--offset N] [--format text|json]
                                Proposed knowledge, principles and kinds, and pending kind changes, for reading
+  review -i                    Reviewer: accept, reject (with a reason) or skip each item in turn
   accept ID [ID ...] | accept NEW --replaces OLD | accept --all
                                Reviewer: accept proposals at their current version; --replaces
                                supersedes OLD after NEW is accepted
@@ -203,7 +204,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	case "kind":
 		return kindCommand(ctx, cfg, rest, stdout, stderr)
 	case "review":
-		return review(ctx, cfg, rest, stdout, stderr)
+		return review(ctx, cfg, rest, stdin, stdout, stderr)
 	case "accept":
 		return accept(ctx, cfg, rest, stdout, stderr)
 	case "status":

@@ -15,14 +15,19 @@ import (
 
 // review lists proposed knowledge, principles and kinds, and pending kind
 // changes, the reviewer's queue. It is
-// read-only, so agents and read-only identities can see what awaits review.
-func review(ctx context.Context, cfg config, args []string, stdout, stderr io.Writer) error {
+// read-only, so agents and read-only identities can see what awaits review;
+// with -i the reviewer decides on each item in turn.
+func review(ctx context.Context, cfg config, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	fs := flags("review", stderr)
 	limit := fs.Int("limit", 50, "maximum records per kind (1–200)")
 	offset := fs.Int("offset", 0, "number of records to skip per kind")
 	format := fs.String("format", "text", "text (readable) or json")
+	interactive := fs.Bool("i", false, "reviewer: decide on each proposal in turn")
 	if err := parse(fs, args); err != nil {
 		return err
+	}
+	if set := supplied(fs); *interactive && (set["format"] || set["offset"]) {
+		return errors.New("review -i takes no --format or --offset")
 	}
 	if *format != "text" && *format != "json" {
 		return errors.New("review --format must be text or json")
@@ -33,6 +38,9 @@ func review(ctx context.Context, cfg config, args []string, stdout, stderr io.Wr
 	c, err := cfg.client()
 	if err != nil {
 		return err
+	}
+	if *interactive {
+		return reviewInteractive(ctx, c, stdin, stdout)
 	}
 	queue := map[string]json.RawMessage{}
 	for key, kind := range map[string]string{"knowledge": "knowledge", "principles": "principle"} {

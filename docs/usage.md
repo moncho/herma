@@ -46,6 +46,19 @@ under Principles, Knowledge, Kinds and Pending kind changes. A line counts what
 `--limit` left out. Any identity can run it; `--format json` prints the raw lists
 instead.
 
+On the server, the reviewer can go through the same queue and decide as they read:
+
+```sh
+herma --identity owner review -i
+```
+
+It shows one item at a time and asks `[a]ccept [r]eject [s]kip [q]uit`. Rejecting
+a proposal asks for a one-line reason; rejecting a pending kind change discards
+it. Each decision applies to the version that was shown, so an item an agent
+edited meanwhile is reported under Failed and left as it is. Quitting, or the end
+of input, keeps the decisions already made. A summary of what was accepted,
+rejected, skipped and failed ends the run, which exits nonzero if any failed.
+
 `accept` reads each record's current version itself and reports every record
 under `accepted`, `superseded` or `failed`; one failure does not stop the
 others, but the command exits nonzero. `--replaces` marks the old record
