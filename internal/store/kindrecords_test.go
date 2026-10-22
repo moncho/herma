@@ -561,3 +561,29 @@ func TestRejectedKindFreesItsNameAndCannotBeUsed(t *testing.T) {
 		t.Fatalf("Kinds lists bookmark as %v", statuses)
 	}
 }
+
+func TestRejectedKindIsNotUsedForItsNamesake(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	rejected := proposeKind(t, s, "bookmark", bookmarkDefinition(), "")
+	rejected, _, err := s.Update(ctx, rejected.ID, reviewer("owner"), "", UpdateInput{Version: 1, Status: pointer("rejected")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	quiet := bookmarkDefinition()
+	quiet["policy"] = map[string]any{"recall": false}
+	acceptKind(t, s, "bookmark", quiet, "")
+	if _, _, err := s.Create(ctx, agent("a"), "", CreateInput{Kind: "bookmark", Title: "Zebra stripes", Fields: map[string]any{"url": "https://z.example"}}); err != nil {
+		t.Fatal(err)
+	}
+	found, err := s.Recall(ctx, RecallOptions{Query: "zebra"})
+	if err != nil || len(found) != 0 {
+		t.Fatalf("recall used the rejected kind's policy: %+v %v", found, err)
+	}
+	if _, _, err := s.Update(ctx, rejected.ID, agent("a"), "", UpdateInput{Version: rejected.Version, Fields: map[string]any{"pending": bookmarkDefinition()}}); err == nil {
+		t.Fatal("a rejected kind took a pending change")
+	}
+	if _, _, err := s.Update(ctx, rejected.ID, reviewer("owner"), "", UpdateInput{Version: rejected.Version, Body: pointer("edited")}); err == nil {
+		t.Fatal("a rejected kind was edited")
+	}
+}

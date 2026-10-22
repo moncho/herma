@@ -159,6 +159,9 @@ func authorizeKindUpdate(author Author, old, next Record, acceptingPending bool)
 	if next.Title != old.Title || next.ProjectID != old.ProjectID {
 		return invalid("a kind's name and project cannot change")
 	}
+	if old.Status == "rejected" {
+		return invalid("a rejected kind cannot change; propose a new kind instead")
+	}
 	if next.Archived && !old.Archived && old.Status != "proposed" {
 		return invalid("only a proposed kind can be archived; retire it instead")
 	}

@@ -102,7 +102,7 @@ func (s *Store) Recall(ctx context.Context, o RecallOptions) ([]Recalled, error)
 	}
 	var reviewed, open []string
 	for _, k := range kinds {
-		if !k.Definition.Policy.Recall || k.Status == "proposed" {
+		if !k.Definition.Policy.Recall || k.Status == "proposed" || k.Status == "rejected" {
 			continue
 		}
 		if k.review() {

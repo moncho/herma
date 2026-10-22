@@ -172,7 +172,7 @@ herma --identity owner update KIND_ID --version N --status rejected
 `herma kind list` shows the kinds. A kind is `proposed`, `accepted`, `retired` or
 `rejected`; you can move a retired kind back to `accepted`. A rejected kind stays
 listed but holds no claim on its name, so a new kind can be proposed under it, and
-no records can be written for it. Only a proposed kind can be
+no records can be written for it. A rejected kind cannot be changed. Only a proposed kind can be
 archived. The name and project never change. A kind may be tied to a project
 with `--project ID`, and then its records must belong to that project; otherwise
 it is global. No records can be written until the kind is accepted.
