@@ -312,6 +312,13 @@ func (s *Store) Update(ctx context.Context, id string, author Author, key string
 	if err := authorizeUpdate(author, k, old, r, input.AcceptPending && author.Role == RoleReviewer); err != nil {
 		return Record{}, false, err
 	}
+	if input.ReviewReason != nil {
+		reason, err := reviewReason(author, k, old, r, *input.ReviewReason)
+		if err != nil {
+			return Record{}, false, err
+		}
+		r.ReviewReason = reason
+	}
 	if err := validateReferences(ctx, tx, r, oldProject); err != nil {
 		return Record{}, false, err
 	}
@@ -670,11 +677,30 @@ func markReview(author Author, k Kind, previousStatus string, r *Record, at time
 	if !(k.review() || r.Kind == "kind") || r.Status == previousStatus {
 		return
 	}
+	if r.Status != "rejected" {
+		r.ReviewReason = ""
+	}
 	if r.Status == "proposed" {
 		r.ReviewedBy, r.ReviewedAt = "", nil
 		return
 	}
 	r.ReviewedBy, r.ReviewedAt = author.Name, &at
+}
+
+// reviewReason checks a reason the reviewer gives while rejecting a reviewed
+// record or a kind, and returns it trimmed.
+func reviewReason(author Author, k Kind, old, next Record, reason string) (string, error) {
+	if author.Role != RoleReviewer {
+		return "", forbidden("only a reviewer can give a review reason")
+	}
+	if !(k.review() || next.Kind == "kind") || old.Status == "rejected" || next.Status != "rejected" {
+		return "", invalid("review_reason: give it only when rejecting")
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" || strings.ContainsAny(reason, "\r\n") || !utf8.ValidString(reason) || utf8.RuneCountInString(reason) > 300 {
+		return "", invalid("review_reason must be one line of 1 to 300 characters")
+	}
+	return reason, nil
 }
 
 func normalizeRecord(r *Record, k Kind) error {
@@ -778,7 +804,7 @@ func validateReferences(ctx context.Context, tx *sql.Tx, r Record, oldProject st
 }
 
 func hasContentChanges(input UpdateInput) bool {
-	return input.Title != nil || input.Body != nil || input.ProjectID != nil || input.Status != nil || input.Priority != nil || input.Owner != nil || input.Tags != nil || input.Links != nil || input.Sources != nil || input.Fields != nil
+	return input.Title != nil || input.Body != nil || input.ProjectID != nil || input.Status != nil || input.Priority != nil || input.Owner != nil || input.Tags != nil || input.Links != nil || input.Sources != nil || input.Fields != nil || input.ReviewReason != nil
 }
 
 func validateList(o *ListOptions) error {

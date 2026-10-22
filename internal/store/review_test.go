@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -152,5 +153,48 @@ func TestAgentEditAndReviewerAcceptRaceHaveOneWinner(t *testing.T) {
 	}
 	if current.Status == "proposed" && current.Body != "Agent edit" {
 		t.Fatalf("agent winner lost its edit: %+v", current)
+	}
+}
+
+func TestReviewerRejectsWithReason(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	p, _, err := s.Create(ctx, agent("agent-a"), "", CreateInput{Kind: "principle", Title: "Candidate"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reason := "too specific to this repo"
+	if _, _, err = s.Update(ctx, p.ID, agent("agent-a"), "", UpdateInput{Version: 1, Status: pointer("rejected"), ReviewReason: &reason}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("agent gave a reason: %v", err)
+	}
+	_, _, err = s.Update(ctx, p.ID, reviewer("owner"), "", UpdateInput{Version: 1, ReviewReason: &reason})
+	assertValidation(t, err)
+	for _, bad := range []string{"", " ", "two\nlines", strings.Repeat("x", 301)} {
+		_, _, err = s.Update(ctx, p.ID, reviewer("owner"), "", UpdateInput{Version: 1, Status: pointer("rejected"), ReviewReason: pointer(bad)})
+		assertValidation(t, err)
+	}
+	rejected, _, err := s.Update(ctx, p.ID, reviewer("owner"), "", UpdateInput{Version: 1, Status: pointer("rejected"), ReviewReason: pointer("  " + reason + " ")})
+	if err != nil || rejected.ReviewReason != reason {
+		t.Fatalf("%+v %v", rejected, err)
+	}
+	if got, _ := s.Get(ctx, p.ID); got.ReviewReason != reason {
+		t.Fatalf("stored reason %q", got.ReviewReason)
+	}
+	_, _, err = s.Update(ctx, p.ID, reviewer("owner"), "", UpdateInput{Version: 2, ReviewReason: pointer("changed my mind")})
+	assertValidation(t, err)
+	reopened, _, err := s.Update(ctx, p.ID, reviewer("owner"), "", UpdateInput{Version: 2, Status: pointer("proposed")})
+	if err != nil || reopened.ReviewReason != "" {
+		t.Fatalf("reason kept after leaving rejected: %+v %v", reopened, err)
+	}
+	task, _, err := s.Create(ctx, agent("agent-a"), "", CreateInput{Kind: "task", Title: "Work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = s.Update(ctx, task.ID, reviewer("owner"), "", UpdateInput{Version: 1, Status: pointer("done"), ReviewReason: &reason})
+	assertValidation(t, err)
+	kind := proposeKind(t, s, "bookmark", bookmarkDefinition(), "")
+	rejectedKind, _, err := s.Update(ctx, kind.ID, reviewer("owner"), "", UpdateInput{Version: 1, Status: pointer("rejected"), ReviewReason: &reason})
+	if err != nil || rejectedKind.ReviewReason != reason {
+		t.Fatalf("kind: %+v %v", rejectedKind, err)
 	}
 }

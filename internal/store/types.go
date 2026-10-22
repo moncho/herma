@@ -64,7 +64,9 @@ type Record struct {
 	// Set by the store when a reviewer judges a durable record; never by clients.
 	ReviewedBy string     `json:"reviewed_by,omitempty"`
 	ReviewedAt *time.Time `json:"reviewed_at,omitempty"`
-	Version    int64      `json:"version"`
+	// Why the reviewer rejected the record; kept only while it is rejected.
+	ReviewReason string `json:"review_reason,omitempty"`
+	Version      int64  `json:"version"`
 }
 
 type CreateInput struct {
@@ -97,6 +99,8 @@ type UpdateInput struct {
 	// Fields is a patch: a value sets a field and null removes it.
 	Fields        map[string]any `json:"fields,omitempty"`
 	AcceptPending bool           `json:"accept_pending,omitempty"`
+	// ReviewReason is the reviewer's reason, given only when rejecting.
+	ReviewReason *string `json:"review_reason,omitempty"`
 }
 
 type ListOptions struct {

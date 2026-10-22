@@ -52,7 +52,16 @@ others, but the command exits nonzero. `--replaces` marks the old record
 `superseded` only after the new one is accepted, so one of them always applies.
 `--all` accepts every proposed principle, knowledge record and kind; pending kind
 changes still need `update KIND_ID --version N --accept-pending`. Rejecting, or
-any other status, uses `update` with `--version`.
+any other status, uses `update` with `--version`. A rejection can say why:
+
+```sh
+herma --identity owner update RECORD_ID --version N --status rejected --reason 'Too specific to one repository'
+```
+
+The reason is one line of 1-300 characters, only a reviewer gives it, and only in
+the update that rejects a principle, knowledge record, kind or record of a
+reviewed custom kind. The record shows it as `review_reason` until it leaves
+`rejected`.
 
 Kind definitions follow `proposed`, `accepted`, `retired` or `rejected`, and only
 the reviewer moves them (see Custom kinds). `herma review` lists proposed kinds under Kinds and

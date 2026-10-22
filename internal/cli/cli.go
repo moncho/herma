@@ -82,7 +82,7 @@ Fields: --title, --body, --body-file, --project, --status, --priority,
         --owner, --tags, --links, --sources, --field NAME=VALUE (repeatable),
         --fields-file PATH. Lists are comma-separated.
 The human reviewer accepts or rejects with update ID --version N --status accepted|rejected (--identity owner),
-and accepts a kind's pending change with update ID --version N --accept-pending.
+adds --reason TEXT to say why when rejecting, and accepts a kind's pending change with update ID --version N --accept-pending.
 Writes accept --request-id KEY for safe retries; write errors include the key used.
 Updates send only supplied fields. Record bodies may contain up to 64 KiB of UTF-8.
 Use COMMAND --help for command options; for update use update ID --help.
@@ -481,6 +481,7 @@ func update(ctx context.Context, cfg config, args []string, stdout, stderr io.Wr
 	version := fs.Int64("version", 0, "current record version (required)")
 	archived := fs.String("archived", "", "true to archive, false to restore")
 	acceptPending := fs.Bool("accept-pending", false, "reviewer: accept a kind's pending definition change")
+	reason := fs.String("reason", "", "reviewer: why the record is rejected (with --status rejected)")
 	if err := parse(fs, args[1:]); err != nil {
 		return err
 	}
@@ -503,6 +504,9 @@ func update(ctx context.Context, cfg config, args []string, stdout, stderr io.Wr
 	}
 	if set["status"] {
 		input.Status = &v.status
+	}
+	if set["reason"] {
+		input.ReviewReason = reason
 	}
 	if set["priority"] {
 		input.Priority = &v.priority

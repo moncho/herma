@@ -138,3 +138,14 @@ func TestSessionStartWithReviewerWarnsAndContinues(t *testing.T) {
 		t.Fatalf("reviewer session start: %s", out)
 	}
 }
+
+func TestUpdateRejectsWithReason(t *testing.T) {
+	startServe(t)
+	id := proposePrinciple(t, "Narrow rule")
+	if _, err := runCLI(t, "--identity", "owner", "update", id, "--version", "1", "--status", "rejected", "--reason", "too specific"); err != nil {
+		t.Fatal(err)
+	}
+	if r := cliRecord(t, "get", id); r.Status != "rejected" || r.ReviewReason != "too specific" {
+		t.Fatalf("%+v", r)
+	}
+}

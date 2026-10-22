@@ -24,6 +24,7 @@ func schemaDocument(kinds []store.Kind) map[string]any {
 			"accept_pending":            "PATCH boolean on a kind record (reviewer only): replace its definition with fields.pending after checking every live record",
 			"version":                   "server increments on each update; PATCH requires the version you read",
 			"archived":                  "PATCH boolean; hidden from lists and context by default; restorable",
+			"review_reason":             "PATCH string (reviewer only), one line of 1–300 characters, given only in the update that rejects a record; kept while the record stays rejected",
 			"reviewed_by / reviewed_at": "set by the server when a reviewer accepts, rejects or supersedes knowledge or a principle; cleared when it returns to proposed; clients cannot set them",
 			"created_by / updated_by":   "derived from bearer identity; clients cannot set these fields",
 		},
