@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -519,5 +520,44 @@ func TestAcceptPendingRefreshesSearchText(t *testing.T) {
 	}
 	if found, err := s.List(ctx, ListOptions{Kind: "bookmark", Query: "p.example"}); err != nil || len(found.Items) != 1 {
 		t.Fatalf("url no longer searchable: %+v %v", found, err)
+	}
+}
+
+func TestRejectedKindFreesItsNameAndCannotBeUsed(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	first := proposeKind(t, s, "bookmark", bookmarkDefinition(), "")
+	if _, _, err := s.Update(ctx, first.ID, agent("a"), "", UpdateInput{Version: 1, Status: pointer("rejected")}); err == nil {
+		t.Fatal("an agent rejected a kind")
+	}
+	rejected, _, err := s.Update(ctx, first.ID, reviewer("owner"), "", UpdateInput{Version: 1, Status: pointer("rejected")})
+	if err != nil || rejected.ReviewedBy != "owner" {
+		t.Fatalf("%+v %v", rejected, err)
+	}
+	if _, _, err := s.Create(ctx, agent("a"), "", CreateInput{Kind: "bookmark", Title: "x", Fields: map[string]any{"url": "https://a.com"}}); err == nil || !strings.Contains(err.Error(), `unknown kind "bookmark"`) {
+		t.Fatalf("record of a rejected kind: %v", err)
+	}
+	for _, status := range []string{"proposed", "accepted", "retired"} {
+		if _, _, err := s.Update(ctx, first.ID, reviewer("owner"), "", UpdateInput{Version: 2, Status: pointer(status)}); err == nil {
+			t.Fatalf("rejected kind moved to %s", status)
+		}
+	}
+	second := acceptKind(t, s, "bookmark", bookmarkDefinition(), "")
+	k, found, err := lookupKind(ctx, s.db, "bookmark")
+	if err != nil || !found || k.RecordID != second.ID {
+		t.Fatalf("lookup returned %+v %v %v, want %s", k, found, err, second.ID)
+	}
+	kinds, err := s.Kinds(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var statuses []string
+	for _, k := range kinds {
+		if k.Name == "bookmark" {
+			statuses = append(statuses, k.Status)
+		}
+	}
+	if !slices.Contains(statuses, "rejected") || !slices.Contains(statuses, "accepted") {
+		t.Fatalf("Kinds lists bookmark as %v", statuses)
 	}
 }

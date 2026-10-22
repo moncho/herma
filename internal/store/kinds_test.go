@@ -14,7 +14,7 @@ func TestBuiltinKindsMatchPreviousRules(t *testing.T) {
 		"task":      {"open", "in_progress", "blocked", "done"},
 		"note":      {"published"},
 		"feedback":  {"open", "triaged", "resolved"},
-		"kind":      {"proposed", "accepted", "retired"},
+		"kind":      {"proposed", "accepted", "retired", "rejected"},
 	}
 	if len(builtinOrder) != len(want) {
 		t.Fatalf("builtinOrder = %v", builtinOrder)

@@ -318,7 +318,7 @@ func (s *Store) Update(ctx context.Context, id string, author Author, key string
 	if err := checkUnique(ctx, tx, k, r); err != nil {
 		return Record{}, false, err
 	}
-	if r.Kind == "kind" && !r.Archived {
+	if r.Kind == "kind" && !r.Archived && r.Status != "rejected" {
 		if err := checkKindNameFree(ctx, tx, r); err != nil {
 			return Record{}, false, err
 		}

@@ -127,7 +127,7 @@ var builtinKinds = map[string]Kind{
 	// Principles load through their own context block and the rules file.
 	"principle": {ContextGlobal: true, Definition: Definition{Policy: Policy{Review: true, Recall: true}}},
 	// Kind records follow their own lifecycle; see kindrecords.go.
-	"kind": {Definition: Definition{Statuses: []string{"proposed", "accepted", "retired"}}},
+	"kind": {Definition: Definition{Statuses: []string{"proposed", "accepted", "retired", "rejected"}}},
 }
 
 func init() {

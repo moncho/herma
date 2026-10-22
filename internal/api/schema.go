@@ -74,7 +74,7 @@ func schemaDocument(kinds []store.Kind) map[string]any {
 }
 
 func schemaKinds(kinds []store.Kind) map[string][]map[string]any {
-	groups := map[string][]map[string]any{"builtin": {}, "accepted": {}, "proposed": {}, "retired": {}}
+	groups := map[string][]map[string]any{"builtin": {}, "accepted": {}, "proposed": {}, "retired": {}, "rejected": {}}
 	for _, k := range kinds {
 		entry := map[string]any{
 			"name": k.Name, "statuses": k.Statuses(), "default_status": k.DefaultStatus(),

@@ -68,7 +68,7 @@ version check (kind definitions, field validation and uniqueness are checked in
 that same transaction): agents create knowledge and principles only as proposed and cannot
 change them once judged, and accepting requires a source. A reviewer's judgement
 sets `reviewed_by` and `reviewed_at`. Kind records follow proposed, accepted,
-retired, and only a reviewer moves them.
+retired or rejected, and only a reviewer moves them; a rejected kind frees its name.
 
 `herma serve` runs one handler on two listeners: loopback TCP for everyone and a
 private Unix socket that marks its requests. Credentials reload on `SIGHUP` or

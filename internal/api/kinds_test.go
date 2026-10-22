@@ -80,6 +80,9 @@ func TestSchemaListsLiveKinds(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &doc); err != nil {
 		t.Fatal(err)
 	}
+	if rejected, ok := doc.Kinds["rejected"]; !ok || len(rejected) != 0 {
+		t.Fatalf("schema has no empty rejected group: %s", response.Body.String())
+	}
 	if len(doc.Kinds["builtin"]) != 7 || len(doc.Kinds["accepted"]) != 1 || doc.Kinds["accepted"][0].Name != "bookmark" || doc.Kinds["accepted"][0].Fields["url"] == nil {
 		t.Fatalf("schema kinds: %s", response.Body.String())
 	}

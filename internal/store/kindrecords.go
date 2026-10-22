@@ -16,13 +16,14 @@ type queryer interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
-// lookupKind finds a built-in kind or the unarchived kind record with that name.
+// lookupKind finds a built-in kind or the unarchived, unrejected kind record
+// with that name. A rejected kind gives up its name, so no records can use it.
 func lookupKind(ctx context.Context, q queryer, name string) (Kind, bool, error) {
 	if k, ok := builtinKinds[name]; ok {
 		return k, true, nil
 	}
 	var data string
-	err := q.QueryRowContext(ctx, `SELECT data FROM records WHERE kind = 'kind' AND archived = 0 AND json_extract(data, '$.title') = ?`, name).Scan(&data)
+	err := q.QueryRowContext(ctx, `SELECT data FROM records WHERE kind = 'kind' AND archived = 0 AND json_extract(data, '$.status') <> 'rejected' AND json_extract(data, '$.title') = ?`, name).Scan(&data)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Kind{}, false, nil
 	}
@@ -135,10 +136,11 @@ func validateKindName(r Record) error {
 	return nil
 }
 
-// checkKindNameFree runs inside the write transaction for unarchived kind records.
+// checkKindNameFree runs inside the write transaction for unarchived,
+// unrejected kind records.
 func checkKindNameFree(ctx context.Context, tx *sql.Tx, r Record) error {
 	var other string
-	err := tx.QueryRowContext(ctx, `SELECT id FROM records WHERE kind = 'kind' AND archived = 0 AND id <> ? AND json_extract(data, '$.title') = ?`, r.ID, r.Title).Scan(&other)
+	err := tx.QueryRowContext(ctx, `SELECT id FROM records WHERE kind = 'kind' AND archived = 0 AND json_extract(data, '$.status') <> 'rejected' AND id <> ? AND json_extract(data, '$.title') = ?`, r.ID, r.Title).Scan(&other)
 	if err == nil {
 		return invalid(fmt.Sprintf("kind %q already exists as %s", r.Title, other))
 	}
@@ -148,7 +150,7 @@ func checkKindNameFree(ctx context.Context, tx *sql.Tx, r Record) error {
 	return err
 }
 
-var kindTransitions = map[string][]string{"proposed": {"accepted"}, "accepted": {"retired"}, "retired": {"accepted"}}
+var kindTransitions = map[string][]string{"proposed": {"accepted", "rejected"}, "accepted": {"retired"}, "retired": {"accepted"}}
 
 // authorizeKindUpdate applies the kind lifecycle. acceptingPending is true
 // only for accept_pending by a reviewer (Update passes it only for one),

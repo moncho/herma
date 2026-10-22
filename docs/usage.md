@@ -10,7 +10,7 @@
 | `feedback` | Unresolved coordination friction or blocker | `open`, `triaged`, `resolved` |
 | `knowledge` | Durable knowledge; reviewed before it counts | `proposed`, `accepted`, `rejected`, `superseded` |
 | `principle` | Durable conventions; reviewed before they count | `proposed`, `accepted`, `rejected`, `superseded` |
-| `kind` | A record kind definition: typed fields, statuses and policy | `proposed`, `accepted`, `retired` |
+| `kind` | A record kind definition: typed fields, statuses and policy | `proposed`, `accepted`, `retired`, `rejected` |
 
 Records have stable IDs, text bodies, optional project membership, priority
 from 0 to 5 (5 is highest), tags, links to other records, and source references.
@@ -54,8 +54,8 @@ others, but the command exits nonzero. `--replaces` marks the old record
 changes still need `update KIND_ID --version N --accept-pending`. Rejecting, or
 any other status, uses `update` with `--version`.
 
-Kind definitions follow `proposed`, `accepted`, `retired`, and only the reviewer
-moves them (see Custom kinds). `herma review` lists proposed kinds under Kinds and
+Kind definitions follow `proposed`, `accepted`, `retired` or `rejected`, and only
+the reviewer moves them (see Custom kinds). `herma review` lists proposed kinds under Kinds and
 accepted kinds with a pending change under Pending kind changes (`kinds` and
 `pending_kind_changes` in `--format json`).
 
@@ -142,10 +142,15 @@ herma --identity owner update KIND_ID --version N --accept-pending
 
 # Reviewer: stop new records; existing ones stay readable and editable.
 herma --identity owner update KIND_ID --version N --status retired
+
+# Reviewer: turn down a proposed kind. This is final and frees the name.
+herma --identity owner update KIND_ID --version N --status rejected
 ```
 
-`herma kind list` shows the kinds. A kind is `proposed`, `accepted` or `retired`;
-you can move a retired kind back to `accepted`. Only a proposed kind can be
+`herma kind list` shows the kinds. A kind is `proposed`, `accepted`, `retired` or
+`rejected`; you can move a retired kind back to `accepted`. A rejected kind stays
+listed but holds no claim on its name, so a new kind can be proposed under it, and
+no records can be written for it. Only a proposed kind can be
 archived. The name and project never change. A kind may be tied to a project
 with `--project ID`, and then its records must belong to that project; otherwise
 it is global. No records can be written until the kind is accepted.
@@ -234,7 +239,7 @@ field. The API accepts arrays directly when a value itself contains a comma.
 Commands return JSON to standard output and errors to standard error with a
 nonzero exit code. `herma help` lists all commands, and `herma schema` describes the
 live API, record fields, filters and limits. Its `kinds` are grouped as
-`builtin`, `accepted`, `proposed` and `retired`; each entry lists the kind's
+`builtin`, `accepted`, `proposed`, `retired` and `rejected`; each entry lists the kind's
 name, statuses, default status, fields and policy, and custom kinds add their
 definition `record_id`, `description`, `pending` change and `project_id`.
 
