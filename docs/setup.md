@@ -66,14 +66,14 @@ To keep the reviewer token out of the agents' `credentials.json`, add
 In the foreground, use `herma serve --backup-dir DIR`. See
 [backups and restore](operations.md#backups-and-restore).
 
-`make service-start` installs herma first and runs the installed binary on the
-data folder (`HERMA_DIR=…` picks another). macOS manages the process and restarts
-it if it fails. Logs are in `server.log` in the data folder. To stop it, run
-`make service-stop`; to deploy a new version, stop it and run `make
-service-start` again. Credential changes are
-picked up automatically. This job is registered for the current login session,
-so run `make service-start` again after logging out or rebooting. It does not
-install an automatic login item.
+`make service-start` installs herma first and writes a launch agent,
+`~/Library/LaunchAgents/local.herma.plist`, that runs the installed binary on the
+data folder (`HERMA_DIR=…` picks another). macOS manages the process, restarts
+it if it fails and starts it again at every login, so it survives a reboot once
+you log in. Logs are in `server.log` in the data folder. To stop it and remove
+the launch agent, run `make service-stop`; to deploy a new version or change
+the variables, run `make service-start` again. Credential changes are picked up
+automatically.
 
 If a client reports `connection refused`, or a reviewer command reports that
 nothing is listening on the socket, no service is running for these credentials.
