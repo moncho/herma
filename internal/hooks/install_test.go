@@ -103,7 +103,10 @@ func TestInstallBothPreservesSettingsAndUpdatesManagedHook(t *testing.T) {
 		if result.Client == "codex" && handler["additionalContextLimit"] != json.Number("70000") {
 			t.Fatal("missing Codex additional context limit")
 		}
-		if result.Client == "claude" && handler["additionalContextLimit"] != nil {
+		if result.Client == "codex" && handler["statusMessage"] != "Loading herma principles" {
+			t.Fatal("missing Codex hook label")
+		}
+		if result.Client == "claude" && (handler["additionalContextLimit"] != nil || handler["statusMessage"] != nil) {
 			t.Fatal("added Codex-only field to Claude")
 		}
 		info, err := os.Stat(result.Path)

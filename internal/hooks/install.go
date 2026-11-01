@@ -390,6 +390,8 @@ func merge(data []byte, client, command string, replace bool) ([]byte, error) {
 	handler := map[string]any{"type": "command", "command": command, "timeout": 6, "async": false}
 	if client == "codex" {
 		handler["additionalContextLimit"] = 70000
+		// Codex's /hooks list names each hook by its status message.
+		handler["statusMessage"] = "Loading herma principles"
 	}
 	// An omitted matcher covers every SessionStart source, including Claude's
 	// fork events and future lifecycle sources, without client-specific filters.
@@ -437,7 +439,7 @@ func merge(data []byte, client, command string, replace bool) ([]byte, error) {
 				}
 			}
 			for _, key := range h.keys {
-				if key != "type" && key != "command" && key != "timeout" && key != "async" && key != "additionalContextLimit" {
+				if key != "type" && key != "command" && key != "timeout" && key != "async" && key != "additionalContextLimit" && key != "statusMessage" {
 					return nil, errors.New("managed herma hook has custom fields; remove its managed marker to preserve it separately")
 				}
 			}
