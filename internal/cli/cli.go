@@ -25,74 +25,66 @@ import (
 // by agent sessions, can never approve knowledge.
 const defaultIdentity = "local-agent"
 
-const usage = `Usage: herma [--url URL] [--credentials PATH] [--identity NAME] [--socket PATH] COMMAND [options]
+const usage = `herma: shared memory for agent sessions. Agents propose knowledge and
+principles; the reviewer accepts them; sessions load what was accepted.
 
-Global flags must come before the command. Environment defaults:
-  HERMA_URL          http://127.0.0.1:8765
-  HERMA_DIR          ~/.config/herma; holds credentials, database, socket and plugin
-  HERMA_CREDENTIALS  credentials.json in HERMA_DIR
-  HERMA_IDENTITY     local-agent
-  HERMA_SOCKET       herma.sock next to the credentials file
-  HERMA_TOKEN        optional bearer token; replaces credential-file authentication
-  HERMA_REVIEWER_CREDENTIALS
-                  second credentials file herma serve reads (--reviewer-credentials)
+Usage: herma [global flags] COMMAND [options]
 
-For client commands, HERMA_TOKEN cannot be combined with --identity or a nonempty
-HERMA_IDENTITY. Unset HERMA_TOKEN to use a named identity from the credentials file.
+Global flags (before the command) and their environment defaults:
+  --url URL           HERMA_URL          http://127.0.0.1:8765
+  --credentials PATH  HERMA_CREDENTIALS  credentials.json in HERMA_DIR (~/.config/herma)
+  --identity NAME     HERMA_IDENTITY     local-agent
+  --socket PATH       HERMA_SOCKET       herma.sock next to the credentials file
+                      HERMA_TOKEN        bearer token instead of a credentials file;
+                                         cannot be combined with an identity
 
-Commands:
-  init                         Create owner (reviewer) and local-agent credentials without overwriting
-  identity add NAME [--role agent|read-only|reviewer] [--client-file PATH]
-                               Add credentials; the role defaults to agent. --client-file also
-                               writes a file with only this identity for another machine
-  identity revoke NAME         Remove an identity; herma serve keeps at least one reviewer
-  whoami                       Show the authenticated identity, role and listener
-  serve [--db PATH] [--listen HOST:PORT] [--reviewer-credentials PATH] [--backup-dir DIR] [--backup-every 6h] [--backup-keep 14]
-  backup status                Show automatic snapshot status
-  restore SNAPSHOT|DIR [--db PATH] [--replace]
-                               Restore a snapshot with the service stopped
-  kind propose NAME --file PATH [--project ID] [--body TEXT]
-                               Propose a record kind from a JSON definition
-  kind change ID --file PATH   Propose a change to an accepted kind (fields.pending)
-  kind list                    List kinds with status and pending changes
-  create --kind KIND --title TITLE [--body TEXT | --body-file PATH] [fields]
-  list [--project ID] [--kind KIND] [--q TEXT] [--where 'FIELD>=VALUE']... [--sort -FIELD,KEY] [filters]
-  get ID
-  update ID --version N [fields] [--archived true|false]
-  history ID
-  project bind --project ID [--dir PATH] [--max-bytes N]
-  hook install --client claude|codex|both [--dir CHECKOUT]   Install the user-level session hook; also removes the old project-level hook from --dir (default: current folder)
-  hook session-start [--client claude|codex]
-                               SessionStart hook: principles in every folder, plus an index of open work and knowledge in bound checkouts
-  review [--limit N] [--offset N] [--format text|json]
-                               Proposed knowledge, principles and kinds, and pending kind changes, for reading
-  review -i                    Reviewer: accept, reject (with a reason) or skip each item in turn
-  accept ID [ID ...] | accept NEW --replaces OLD | accept --all
-                               Reviewer: accept proposals at their current version; --replaces
-                               supersedes OLD after NEW is accepted
-  reject ID [ID ...] [--reason TEXT]
-                               Reviewer: reject records at their current version, proposed or
-                               accepted, with one optional reason for all of them
-  status                       Binding, identity, review queue and backup age as JSON (for status lines)
-  context [--project ID] [--max-bytes N] [--include-durable] [--format text|json] [--principles include|omit]
-                               Compact session context (text by default)
-  recall "words" [--project ID] [--include-proposed] [--limit N] [--max-bytes N]
-                               Search reviewed knowledge and principles by relevance
-  principles [--project ID]    Accepted principles as markdown: global, or one project's
-  schema
-  export
+Records
+  create --kind KIND --title TITLE [--body TEXT]   Create a record
+  get ID                                           Show a record
+  update ID --version N [fields]                   Change a record; --archived true|false
+  history ID                                       Show a record's revisions
+  list [--kind KIND] [--q TEXT] [filters]          List and filter records
 
-Fields: --title, --body, --body-file, --project, --status, --priority,
-        --owner, --tags, --links, --sources, --field NAME=VALUE (repeatable),
-        --fields-file PATH. Lists are comma-separated.
-The human reviewer accepts or rejects with accept and reject (--identity owner), or with update ID --version N --status accepted|rejected,
-adding --reason TEXT to say why when rejecting; a kind's pending change is accepted with update ID --version N --accept-pending.
-Writes accept --request-id KEY for safe retries; write errors include the key used.
-Updates send only supplied fields. Record bodies may contain up to 64 KiB of UTF-8.
-Use COMMAND --help for command options; for update use update ID --help.
-Successful results are JSON on stdout, except context, which prints compact text within its byte budget (--format json for JSON).
-herma holds session coordination and reviewed durable knowledge (proposed by
-agents, accepted by the reviewer); real tasks stay in your issue tracker. Errors and server logs go to stderr.
+Session memory
+  context [--project ID]                           Compact context for a session
+  recall "words" [--project ID]                    Search accepted knowledge and principles
+  principles [--project ID]                        Accepted principles as markdown
+  status                                           Binding, identity, queue and backup age
+
+Review (reviewer identity, local socket only)
+  review [--format text|json]                      Show what is waiting for review
+  review -i                                        Accept, reject or skip items one by one
+  accept ID [ID ...]                               Accept proposals as they are now
+  accept NEW --replaces OLD                        Accept NEW, then mark OLD superseded
+  accept --all                                     Accept everything in the queue
+  reject ID [ID ...] [--reason TEXT]               Reject records, proposed or accepted
+
+Custom kinds
+  kind list                                        Kinds with status and pending changes
+  kind propose NAME --file PATH                    Propose a kind from a JSON definition
+  kind change ID --file PATH                       Propose a change to an accepted kind
+  schema                                           Record kinds and fields as JSON
+  export                                           Every record with its history
+
+Setup and server
+  init                                             Create owner and local-agent credentials
+  identity add NAME [--role ROLE]                  Add an identity (agent, read-only, reviewer)
+  identity revoke NAME                             Remove an identity
+  whoami                                           Show the identity and role in use
+  project bind --project ID [--dir PATH]           Bind a checkout to a project
+  hook install --client claude|codex|both          Install the user-level session hook
+  hook session-start [--client claude|codex]       Run as the session hook
+  serve [--db PATH] [--listen HOST:PORT]           Run the server
+  backup status                                    Show automatic snapshot status
+  restore SNAPSHOT|DIR [--db PATH]                 Restore a snapshot (server stopped)
+
+Fields for create and update: --title, --body, --body-file, --project, --status,
+--priority, --owner, --tags, --links, --sources, --field NAME=VALUE, --fields-file PATH.
+Lists are comma-separated; updates send only the fields given.
+
+COMMAND --help lists every option (for update: update ID --help). Results are JSON on
+stdout, except context, which prints text (--format json for JSON). Errors go to stderr.
+Writes accept --request-id KEY for safe retries.
 `
 
 type config struct {
