@@ -68,6 +68,16 @@ func reviewInteractive(ctx context.Context, c *client.Client, stdin io.Reader, s
 			definition, _ := json.MarshalIndent(item.record.Fields["pending"], "  ", "  ")
 			b.WriteString("  pending definition:\n  " + string(definition) + "\n")
 		}
+		var similar *acceptedRecord
+		if !item.pending {
+			var err error
+			if similar, err = similarAccepted(ctx, c, item.record); err != nil {
+				return err
+			}
+			if similar != nil {
+				b.WriteString("  looks like a duplicate of accepted " + similar.ID + " · " + similar.Title + "\n")
+			}
+		}
 		if _, err := io.WriteString(stdout, b.String()); err != nil {
 			return err
 		}
@@ -86,6 +96,16 @@ func reviewInteractive(ctx context.Context, c *client.Client, stdin io.Reader, s
 			input.AcceptPending = true
 		case key == "a":
 			input.Status = pointerTo("accepted")
+			if similar != nil {
+				answer, ok := ask("supersede "+similar.ID+"? [y]es [n]o: ", "y", "n")
+				if !ok {
+					reached = i
+					break
+				}
+				if answer == "n" {
+					similar = nil
+				}
+			}
 		case item.pending:
 			input.Fields = map[string]any{"pending": nil}
 		default:
@@ -104,7 +124,15 @@ func reviewInteractive(ctx context.Context, c *client.Client, stdin io.Reader, s
 			continue
 		}
 		if key == "a" {
-			accepted = append(accepted, reviewOutcome{record: item.record})
+			outcome := reviewOutcome{record: item.record}
+			if similar != nil {
+				if _, err := setStatus(ctx, c, similar.ID, "superseded", nil); err != nil {
+					outcome.note = "accepted, but " + similar.ID + " could not be superseded: " + decisionError(err, similar.ID)
+				} else {
+					outcome.note = "supersedes " + similar.ID
+				}
+			}
+			accepted = append(accepted, outcome)
 		} else {
 			rejected = append(rejected, reviewOutcome{record: item.record})
 		}

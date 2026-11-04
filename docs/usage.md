@@ -67,6 +67,13 @@ others, but the command exits nonzero. `--replaces` marks the old record
 `--all` accepts every proposed principle, knowledge record and kind; pending kind
 changes still need `update KIND_ID --version N --accept-pending`.
 
+Before accepting, `accept` and `review -i` look for an accepted record of the
+same kind whose title says nearly the same thing (most of the words in common).
+`accept` reports such a proposal under `failed` and names the record it
+duplicates; accept it with `--replaces` to supersede that record, or reject it.
+`review -i` shows the duplicate and asks whether to supersede it. `update
+--status accepted` skips the check.
+
 `reject` works the same way for rejecting, and takes proposed records as well as
 accepted ones that should stop counting. One `--reason` applies to every record
 named:

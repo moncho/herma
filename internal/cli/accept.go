@@ -64,6 +64,17 @@ func accept(ctx context.Context, cfg config, args []string, stdout, stderr io.Wr
 		Failed     []acceptFailure  `json:"failed,omitempty"`
 	}{Accepted: []acceptedRecord{}}
 	for _, id := range ids {
+		current, err := getRecord(ctx, c, id)
+		if err == nil && current.Status != "accepted" {
+			var similar *acceptedRecord
+			if similar, err = similarAccepted(ctx, c, current); err == nil && similar != nil && similar.ID != *replaces {
+				err = errors.New(duplicateMessage(id, *similar))
+			}
+		}
+		if err != nil {
+			result.Failed = append(result.Failed, acceptFailure{ID: id, Error: explain(err, id)})
+			continue
+		}
 		r, err := setStatus(ctx, c, id, "accepted", nil)
 		if err != nil {
 			result.Failed = append(result.Failed, acceptFailure{ID: id, Error: explain(err, id)})
@@ -88,23 +99,32 @@ func accept(ctx context.Context, cfg config, args []string, stdout, stderr io.Wr
 	return nil
 }
 
+// getRecord reads a record by ID.
+func getRecord(ctx context.Context, c *client.Client, id string) (store.Record, error) {
+	data, err := c.Do(ctx, http.MethodGet, "/v1/records/"+url.PathEscape(id), nil, nil, "")
+	if err != nil {
+		return store.Record{}, err
+	}
+	var current store.Record
+	if err := json.Unmarshal(data, &current); err != nil {
+		return store.Record{}, err
+	}
+	return current, nil
+}
+
 // setStatus moves a record to status at its current version; reason, when
 // given, is stored as the review reason of a rejection.
 func setStatus(ctx context.Context, c *client.Client, id, status string, reason *string) (acceptedRecord, error) {
 	path := "/v1/records/" + url.PathEscape(id)
-	data, err := c.Do(ctx, http.MethodGet, path, nil, nil, "")
+	current, err := getRecord(ctx, c, id)
 	if err != nil {
-		return acceptedRecord{}, err
-	}
-	var current store.Record
-	if err := json.Unmarshal(data, &current); err != nil {
 		return acceptedRecord{}, err
 	}
 	requestID, err := randomID()
 	if err != nil {
 		return acceptedRecord{}, err
 	}
-	data, err = c.Do(ctx, http.MethodPatch, path, nil, store.UpdateInput{Version: current.Version, Status: &status, ReviewReason: reason}, requestID)
+	data, err := c.Do(ctx, http.MethodPatch, path, nil, store.UpdateInput{Version: current.Version, Status: &status, ReviewReason: reason}, requestID)
 	if err != nil {
 		return acceptedRecord{}, err
 	}
