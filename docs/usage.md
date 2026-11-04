@@ -38,6 +38,7 @@ herma review
 herma --identity owner accept RECORD_ID [RECORD_ID ...]
 herma --identity owner accept NEW_ID --replaces OLD_ID
 herma --identity owner accept --all
+herma --identity owner reject RECORD_ID [RECORD_ID ...] [--reason TEXT]
 ```
 
 `herma review` prints each proposal for reading: its ID, project (by name, or
@@ -64,8 +65,18 @@ under `accepted`, `superseded` or `failed`; one failure does not stop the
 others, but the command exits nonzero. `--replaces` marks the old record
 `superseded` only after the new one is accepted, so one of them always applies.
 `--all` accepts every proposed principle, knowledge record and kind; pending kind
-changes still need `update KIND_ID --version N --accept-pending`. Rejecting, or
-any other status, uses `update` with `--version`. A rejection can say why:
+changes still need `update KIND_ID --version N --accept-pending`.
+
+`reject` works the same way for rejecting, and takes proposed records as well as
+accepted ones that should stop counting. One `--reason` applies to every record
+named:
+
+```sh
+herma --identity owner reject RECORD_ID [RECORD_ID ...] --reason 'Too specific to one repository'
+```
+
+Any other status change uses `update` with `--version`, and a rejection can
+carry its reason there too:
 
 ```sh
 herma --identity owner update RECORD_ID --version N --status rejected --reason 'Too specific to one repository'

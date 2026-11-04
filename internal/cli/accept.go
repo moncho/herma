@@ -64,7 +64,7 @@ func accept(ctx context.Context, cfg config, args []string, stdout, stderr io.Wr
 		Failed     []acceptFailure  `json:"failed,omitempty"`
 	}{Accepted: []acceptedRecord{}}
 	for _, id := range ids {
-		r, err := setStatus(ctx, c, id, "accepted")
+		r, err := setStatus(ctx, c, id, "accepted", nil)
 		if err != nil {
 			result.Failed = append(result.Failed, acceptFailure{ID: id, Error: explain(err, id)})
 			continue
@@ -72,7 +72,7 @@ func accept(ctx context.Context, cfg config, args []string, stdout, stderr io.Wr
 		result.Accepted = append(result.Accepted, r)
 	}
 	if *replaces != "" && len(result.Failed) == 0 {
-		r, err := setStatus(ctx, c, *replaces, "superseded")
+		r, err := setStatus(ctx, c, *replaces, "superseded", nil)
 		if err != nil {
 			result.Failed = append(result.Failed, acceptFailure{ID: *replaces, Error: explain(err, *replaces)})
 		} else {
@@ -88,8 +88,9 @@ func accept(ctx context.Context, cfg config, args []string, stdout, stderr io.Wr
 	return nil
 }
 
-// setStatus moves a record to status at its current version.
-func setStatus(ctx context.Context, c *client.Client, id, status string) (acceptedRecord, error) {
+// setStatus moves a record to status at its current version; reason, when
+// given, is stored as the review reason of a rejection.
+func setStatus(ctx context.Context, c *client.Client, id, status string, reason *string) (acceptedRecord, error) {
 	path := "/v1/records/" + url.PathEscape(id)
 	data, err := c.Do(ctx, http.MethodGet, path, nil, nil, "")
 	if err != nil {
@@ -103,7 +104,7 @@ func setStatus(ctx context.Context, c *client.Client, id, status string) (accept
 	if err != nil {
 		return acceptedRecord{}, err
 	}
-	data, err = c.Do(ctx, http.MethodPatch, path, nil, store.UpdateInput{Version: current.Version, Status: &status}, requestID)
+	data, err = c.Do(ctx, http.MethodPatch, path, nil, store.UpdateInput{Version: current.Version, Status: &status, ReviewReason: reason}, requestID)
 	if err != nil {
 		return acceptedRecord{}, err
 	}

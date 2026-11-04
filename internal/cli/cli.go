@@ -70,6 +70,9 @@ Commands:
   accept ID [ID ...] | accept NEW --replaces OLD | accept --all
                                Reviewer: accept proposals at their current version; --replaces
                                supersedes OLD after NEW is accepted
+  reject ID [ID ...] [--reason TEXT]
+                               Reviewer: reject records at their current version, proposed or
+                               accepted, with one optional reason for all of them
   status                       Binding, identity, review queue and backup age as JSON (for status lines)
   context [--project ID] [--max-bytes N] [--include-durable] [--format text|json] [--principles include|omit]
                                Compact session context (text by default)
@@ -82,8 +85,8 @@ Commands:
 Fields: --title, --body, --body-file, --project, --status, --priority,
         --owner, --tags, --links, --sources, --field NAME=VALUE (repeatable),
         --fields-file PATH. Lists are comma-separated.
-The human reviewer accepts or rejects with update ID --version N --status accepted|rejected (--identity owner),
-adds --reason TEXT to say why when rejecting, and accepts a kind's pending change with update ID --version N --accept-pending.
+The human reviewer accepts or rejects with accept and reject (--identity owner), or with update ID --version N --status accepted|rejected,
+adding --reason TEXT to say why when rejecting; a kind's pending change is accepted with update ID --version N --accept-pending.
 Writes accept --request-id KEY for safe retries; write errors include the key used.
 Updates send only supplied fields. Record bodies may contain up to 64 KiB of UTF-8.
 Use COMMAND --help for command options; for update use update ID --help.
@@ -207,6 +210,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return review(ctx, cfg, rest, stdin, stdout, stderr)
 	case "accept":
 		return accept(ctx, cfg, rest, stdout, stderr)
+	case "reject":
+		return reject(ctx, cfg, rest, stdout, stderr)
 	case "status":
 		return statusCommand(ctx, cfg, rest, stdout, stderr)
 	case "hook":
