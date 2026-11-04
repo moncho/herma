@@ -305,6 +305,19 @@ Notes allow archival/restoration only. To correct a note, append a new note
 linking to the earlier record. Archived records remain readable by ID and in
 history and export. There is no hard-delete endpoint.
 
+## Reading records by hand
+
+`list` and `get` print JSON for programs. With `--format text` they print for a
+person: `list` gives one line per record with its id, kind, status, last update
+and title, then how to see the rest when the page is not the whole result;
+`get` gives the record's header, dates, lists and typed fields, then the title
+and body.
+
+```sh
+herma list --kind knowledge --status accepted --format text
+herma get RECORD_ID --format text
+```
+
 ## Session context
 
 `herma context` (or `herma context --project ID`) prints compact text: a header line,

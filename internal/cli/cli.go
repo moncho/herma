@@ -40,10 +40,10 @@ Global flags (before the command) and their environment defaults:
 
 Records
   create --kind KIND --title TITLE [--body TEXT]   Create a record
-  get ID                                           Show a record
+  get ID [--format text|json]                      Show a record
   update ID --version N [fields]                   Change a record; --archived true|false
   history ID                                       Show a record's revisions
-  list [--kind KIND] [--q TEXT] [filters]          List and filter records
+  list [--kind KIND] [--q TEXT] [--format text]    List and filter records
 
 Session memory
   context [--project ID]                           Compact context for a session
@@ -83,7 +83,7 @@ Fields for create and update: --title, --body, --body-file, --project, --status,
 Lists are comma-separated; updates send only the fields given.
 
 COMMAND --help lists every option (for update: update ID --help). Results are JSON on
-stdout, except context, which prints text (--format json for JSON). Errors go to stderr.
+stdout; context and review print text, and list and get do with --format text. Errors go to stderr.
 Writes accept --request-id KEY for safe retries.
 `
 
@@ -208,15 +208,13 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return statusCommand(ctx, cfg, rest, stdout, stderr)
 	case "hook":
 		return hook(ctx, cfg, rest, stdin, stdout, stderr)
-	case "get", "history":
+	case "get":
+		return get(ctx, cfg, rest, stdout, stderr)
+	case "history":
 		if len(rest) != 1 || strings.HasPrefix(rest[0], "-") {
-			return fmt.Errorf("usage: herma [global flags] %s ID", command)
+			return errors.New("usage: herma [global flags] history ID")
 		}
-		path := "/v1/records/" + url.PathEscape(rest[0])
-		if command == "history" {
-			path += "/history"
-		}
-		return cfg.request(ctx, stdout, http.MethodGet, path, nil, nil, "")
+		return cfg.request(ctx, stdout, http.MethodGet, "/v1/records/"+url.PathEscape(rest[0])+"/history", nil, nil, "")
 	case "context":
 		return projectContextCommand(ctx, cfg, rest, stdout, stderr)
 	case "recall":
@@ -567,8 +565,12 @@ func list(ctx context.Context, cfg config, args []string, stdout, stderr io.Writ
 	var where repeatedFlag
 	fs.Var(&where, "where", "field filter such as 'rating>=4' (repeatable; requires --kind); quote it in the shell")
 	sortSpec := fs.String("sort", "", "sort keys such as -read_at,title (up to 3; '-' for descending)")
+	format := fs.String("format", "json", "json, or text for one line per record")
 	if err := parse(fs, args); err != nil {
 		return err
+	}
+	if *format != "text" && *format != "json" {
+		return errors.New("list --format must be text or json")
 	}
 	if *global && *stringsByQuery["project_id"] != "" {
 		return errors.New("--global and --project cannot be combined")
@@ -594,7 +596,49 @@ func list(ctx context.Context, cfg config, args []string, stdout, stderr io.Writ
 	if *archived {
 		query.Set("include_archived", "true")
 	}
-	return cfg.request(ctx, stdout, http.MethodGet, "/v1/records", query, nil, "")
+	if *format == "json" {
+		return cfg.request(ctx, stdout, http.MethodGet, "/v1/records", query, nil, "")
+	}
+	c, err := cfg.client()
+	if err != nil {
+		return err
+	}
+	data, err := c.Do(ctx, http.MethodGet, "/v1/records", query, nil, "")
+	if err != nil {
+		return err
+	}
+	var page store.ListResult
+	if err := json.Unmarshal(data, &page); err != nil {
+		return err
+	}
+	return listText(stdout, page, *offset)
+}
+
+// get prints one record, as JSON or as text for a person.
+func get(ctx context.Context, cfg config, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return errors.New("usage: herma [global flags] get ID [--format text|json]")
+	}
+	fs := flags("get", stderr)
+	format := fs.String("format", "json", "json, or text for a person")
+	if err := parse(fs, args[1:]); err != nil {
+		return err
+	}
+	if *format != "text" && *format != "json" {
+		return errors.New("get --format must be text or json")
+	}
+	if *format == "json" {
+		return cfg.request(ctx, stdout, http.MethodGet, "/v1/records/"+url.PathEscape(args[0]), nil, nil, "")
+	}
+	c, err := cfg.client()
+	if err != nil {
+		return err
+	}
+	r, err := getRecord(ctx, c, args[0])
+	if err != nil {
+		return err
+	}
+	return recordText(stdout, r, projectNames(ctx, c)(r.ProjectID))
 }
 
 func identityCommand(cfg config, args []string, stdout, stderr io.Writer) error {
