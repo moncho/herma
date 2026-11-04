@@ -242,3 +242,14 @@ func TestPatchReplayReturnsOriginalSnapshotWithoutNewRevision(t *testing.T) {
 		t.Errorf("replay or rejected PATCH added revisions: count = %d, error = %v", len(history), err)
 	}
 }
+
+func TestMalformedRecordIDIsAMissingRecord(t *testing.T) {
+	h, _ := apiTestHandler(t, nil)
+	for _, path := range []string{"/v1/records/rec_nope", "/v1/records/nope", "/v1/records/rec_nope/history"} {
+		response := apiTestRequest(h, http.MethodGet, path, "", "", "Bearer "+apiTestToken, "")
+		assertAPIError(t, response, http.StatusNotFound)
+		if !strings.Contains(response.Body.String(), "record not found") {
+			t.Fatalf("%s: %s", path, response.Body.String())
+		}
+	}
+}

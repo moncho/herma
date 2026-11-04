@@ -241,6 +241,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if len(parts) >= 3 && parts[0] == "v1" && parts[1] == "records" {
+			writeError(w, http.StatusNotFound, "not_found", "record not found: IDs are rec_ followed by 32 hex characters")
+			return
+		}
 		writeError(w, http.StatusNotFound, "not_found", "endpoint not found")
 	}
 }
