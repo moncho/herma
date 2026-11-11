@@ -1,7 +1,25 @@
-.PHONY: build install uninstall test run service-start service-plist service-stop service-status
+.PHONY: build install uninstall test run release service-start service-plist service-stop service-status
+
+# The version comes from the nearest tag (v0.1.0, v0.1.0-3-gabc1234, or
+# -dirty); override it with: make build VERSION=v0.2.0
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -s -w -X github.com/moncho/herma/internal/version.Version=$(VERSION)
+PLATFORMS := darwin/arm64 darwin/amd64 linux/amd64 linux/arm64
 
 build:
-	go build -trimpath -buildvcs=false -o bin/herma ./cmd/herma
+	go build -trimpath -buildvcs=false -ldflags "$(LDFLAGS)" -o bin/herma ./cmd/herma
+
+# Cross-compiles one archive per platform into dist/ with a checksum file.
+# The SQLite driver is pure Go, so no C toolchain is needed.
+release:
+	rm -rf dist && mkdir -p dist
+	for platform in $(PLATFORMS); do \
+		os=$${platform%/*}; arch=$${platform#*/}; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -buildvcs=false -ldflags "$(LDFLAGS)" -o dist/herma_$${os}_$${arch}/herma ./cmd/herma || exit 1; \
+		tar -C dist/herma_$${os}_$${arch} -czf dist/herma_$(VERSION)_$${os}_$${arch}.tar.gz herma; \
+		rm -r dist/herma_$${os}_$${arch}; \
+	done
+	cd dist && shasum -a 256 *.tar.gz > SHA256SUMS
 
 # The binary carries the Claude Code plugin, so a plain copy is enough.
 # Override the target folder with: make install BINDIR=~/.local/bin

@@ -8,10 +8,10 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
-	"runtime/debug"
 	"strings"
 
 	"github.com/moncho/herma/internal/store"
+	"github.com/moncho/herma/internal/version"
 )
 
 // The MCP endpoint speaks the Streamable HTTP transport in its stateless
@@ -189,14 +189,14 @@ func (h *Handler) rpcCall(ctx context.Context, author store.Author, method strin
 			ProtocolVersion string `json:"protocolVersion"`
 		}
 		_ = json.Unmarshal(params, &p)
-		version := mcpDefaultVersion
+		protocol := mcpDefaultVersion
 		if mcpVersions[p.ProtocolVersion] {
-			version = p.ProtocolVersion
+			protocol = p.ProtocolVersion
 		}
 		return map[string]any{
-			"protocolVersion": version,
+			"protocolVersion": protocol,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]string{"name": "herma", "version": buildVersion()},
+			"serverInfo":      map[string]string{"name": "herma", "version": version.Version},
 			"instructions":    mcpInstructions,
 		}, nil
 	case "ping":
@@ -362,12 +362,4 @@ func toolResult(err error) error {
 		return toolError{err.Error()}
 	}
 	return err
-}
-
-// buildVersion is the module version of the running binary.
-func buildVersion() string {
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
-		return info.Main.Version
-	}
-	return "unknown"
 }

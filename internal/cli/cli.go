@@ -19,6 +19,7 @@ import (
 
 	"github.com/moncho/herma/internal/client"
 	"github.com/moncho/herma/internal/store"
+	"github.com/moncho/herma/internal/version"
 )
 
 // defaultIdentity is an agent so that commands run without flags, including
@@ -71,6 +72,7 @@ Setup and server
   identity add NAME [--role ROLE]                  Add an identity (agent, read-only, reviewer)
   identity revoke NAME                             Remove an identity
   whoami                                           Show the identity and role in use
+  version                                          Show the herma version
   project bind --project ID [--dir PATH]           Bind a checkout to a project
   hook install --client claude|codex|both          Install the user-level session hook
   hook session-start [--client claude|codex]       Run as the session hook
@@ -177,6 +179,12 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return output(stdout, map[string]string{"status": "created", "reviewer": "owner", "agent": "local-agent", "credentials": cfg.credentials})
 	case "identity":
 		return identityCommand(cfg, rest, stdout, stderr)
+	case "version":
+		if err := noOptions(command, rest, stderr); err != nil {
+			return err
+		}
+		_, err := io.WriteString(stdout, "herma "+version.Version+"\n")
+		return err
 	case "whoami":
 		if err := noOptions(command, rest, stderr); err != nil {
 			return err

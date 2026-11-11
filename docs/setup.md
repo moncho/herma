@@ -15,7 +15,9 @@ herma identity add session-b
 herma serve
 ```
 
-`go install github.com/moncho/herma/cmd/herma@latest` works as well. The binary
+`go install github.com/moncho/herma/cmd/herma@latest` works as well, as does a
+release archive from GitHub: unpack it and put `herma` on your PATH. `herma
+version` shows which build is installed. The binary
 carries the Claude Code plugin, so it needs no checkout beside it.
 
 herma keeps its data in one folder, `~/.config/herma` unless `HERMA_DIR` names
