@@ -318,6 +318,34 @@ herma list --kind knowledge --status accepted --format text
 herma get RECORD_ID --format text
 ```
 
+## MCP endpoint
+
+The server also speaks the Model Context Protocol at `/mcp`, over the
+Streamable HTTP transport in its stateless form: each JSON-RPC request is one
+POST answered with one JSON response, with no sessions and no server-initiated
+stream. The same bearer tokens and roles apply as to the REST API, so an agent
+identity can read and propose, a read-only identity can only read, and a
+reviewer token is refused over TCP as everywhere else.
+
+It offers four tools: `recall` (search reviewed knowledge and principles),
+`get` (one record by ID), `principles` (the accepted principles as markdown,
+global or for one project) and `propose` (a knowledge or principle proposal
+with at least one source, created as `proposed` by the calling identity).
+The server's `instructions` tell the model to call `principles` at the start
+of a session and `recall` before a decision with history.
+
+Any client that speaks Streamable HTTP with a bearer header can connect. For
+Claude Code, with the token of an agent identity (`herma identity add NAME
+--client-file PATH` writes one for another machine):
+
+```sh
+claude mcp add --transport http herma https://HOST/mcp --header "Authorization: Bearer TOKEN"
+```
+
+The endpoint is listed in `herma schema`. Agents that get herma's hooks
+(Claude Code and Codex) do not need it; it is for every other agent, and for
+hosts where the `herma` binary cannot run next to the agent.
+
 ## Session context
 
 `herma context` (or `herma context --project ID`) prints compact text: a header line,

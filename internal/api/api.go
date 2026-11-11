@@ -138,12 +138,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "reviewer_requires_socket", "reviewer tokens are accepted only on the local Unix socket; unset HERMA_TOKEN and use the named reviewer identity on the server machine")
 		return
 	}
+	author := store.Author{Name: id.actor, Role: id.role}
+	// MCP carries reads over POST; its one write checks the role itself.
+	if r.URL.Path == "/mcp" {
+		h.mcp(w, r, author)
+		return
+	}
 	// Refuse read-only writes before reading a possibly large request body.
 	if id.role == store.RoleReadOnly && (r.Method == http.MethodPost || r.Method == http.MethodPatch) {
 		writeError(w, http.StatusForbidden, "forbidden", "read-only identities cannot write")
 		return
 	}
-	author := store.Author{Name: id.actor, Role: id.role}
 	// URL.Query silently drops malformed parameters. Reject them so a broken
 	// project filter can never turn into a broader query.
 	if _, err := url.ParseQuery(r.URL.RawQuery); err != nil {

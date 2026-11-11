@@ -30,6 +30,7 @@ func schemaDocument(kinds []store.Kind) map[string]any {
 		},
 		"endpoints": []map[string]string{
 			{"method": "GET", "path": "/health", "purpose": "unauthenticated liveness"},
+			{"method": "POST", "path": "/mcp", "purpose": "Model Context Protocol over Streamable HTTP (stateless, one JSON response per request); tools recall, get, principles and propose; same bearer tokens and roles"},
 			{"method": "GET", "path": "/v1/schema", "purpose": "this API description"},
 			{"method": "GET", "path": "/v1/whoami", "purpose": "the authenticated identity, its role, and the listener (tcp or socket) that received the request"},
 			{"method": "GET", "path": "/v1/backup", "purpose": "automatic snapshot status: enabled, directory, interval, keep count, last success, last error and stale; {\"enabled\":false} when herma serve runs without --backup-dir"},
