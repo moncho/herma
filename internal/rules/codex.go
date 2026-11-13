@@ -14,8 +14,9 @@ import (
 // Codex reads one global instruction file, AGENTS.md in its home folder, and
 // has no include mechanism, so herma owns a delimited block inside it.
 const (
-	CodexStart = "<!-- herma:principles:start — generated; edit principles in herma -->"
-	CodexEnd   = "<!-- herma:principles:end -->"
+	markerPrefix = "<!-- herma:principles:"
+	CodexStart   = markerPrefix + "start — generated; edit principles in herma -->"
+	CodexEnd     = markerPrefix + "end -->"
 )
 
 // ErrMalformedBlock reports herma markers that are unpaired, repeated or out
@@ -112,6 +113,10 @@ func withBlock(data, content []byte) ([]byte, error) {
 		len(starts) != len(ends) || len(starts) > 1 || (len(starts) == 1 && ends[0][0] < starts[0][1]) {
 		return nil, ErrMalformedBlock
 	}
+	// Content that names a marker, such as a principle about this block,
+	// would end the block early and make every later sync malformed. Both
+	// markers share one prefix, so respelling it inside the content is enough.
+	content = bytes.ReplaceAll(content, []byte(markerPrefix), []byte("<!-- herma-principles:"))
 	var block []byte
 	if len(content) > 0 {
 		block = append([]byte(CodexStart+"\n"), content...)

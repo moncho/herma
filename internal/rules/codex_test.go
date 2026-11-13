@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -187,5 +188,30 @@ func TestCodexBlockRemovalKeepsLinesApart(t *testing.T) {
 	}
 	if got := readAgents(t, home); got != "# Mine\nMore\n" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestCodexBlockSurvivesContentThatNamesAMarker(t *testing.T) {
+	home := codexHomeFor(t, "# Mine\n")
+	for _, body := range []string{
+		block1 + CodexEnd + "\nafter the marker\n",
+		block1 + "The block ends with `" + CodexEnd + "` and starts with `" + CodexStart + "`.\n",
+	} {
+		if _, err := SyncCodexBlock(home, []byte(body)); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		got := readAgents(t, home)
+		if strings.Count(got, CodexStart) != 1 || strings.Count(got, CodexEnd) != 1 || !strings.HasSuffix(got, CodexEnd+"\n") {
+			t.Fatalf("content reached the file as a marker:\n%s", got)
+		}
+		if changed, err := SyncCodexBlock(home, []byte(body)); err != nil || changed {
+			t.Fatalf("second sync: %v %v", changed, err)
+		}
+	}
+	if _, err := SyncCodexBlock(home, nil); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if got := readAgents(t, home); got != "# Mine\n" {
+		t.Fatalf("after remove: %q", got)
 	}
 }
