@@ -34,11 +34,11 @@ func TestReviewPrintsProposalsAsText(t *testing.T) {
 	got := string(data)
 	for _, want := range []string{
 		"herma review · 2 proposals\n",
-		"\nPrinciples\n" + rule + " · global · by local-agent · ",
+		"\nPrinciples\n" + rule + "@1 · global · by local-agent · ",
 		"\nGlobal rule\n  Do it.\n",
-		"\nKnowledge\n" + fact + " · producerflow/mono · by local-agent · ",
+		"\nKnowledge\n" + fact + "@1 · producerflow/mono · by local-agent · ",
 		"\nSpanner trap\n  First line.\n  Second line.\n  sources: https://example.com/a, memo:b\n",
-		"Accept on the server: herma --identity owner accept ID [ID ...]\n",
+		"Accept on the server: herma --identity owner accept " + rule + "@1 " + fact + "@1\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("review lacks %q:\n%s", want, got)
@@ -78,5 +78,32 @@ func TestReviewRejectsAnUnknownFormat(t *testing.T) {
 	startServe(t)
 	if data, err := runCLI(t, "review", "--format", "yaml"); err == nil {
 		t.Fatalf("accepted yaml: %s", data)
+	}
+}
+
+func TestReviewShowsControlCharactersInsteadOfSendingThem(t *testing.T) {
+	startServe(t)
+	forged := "rec_00000000000000000000000000000000@1 · global · by owner"
+	id := createdID(t, "create", "--kind", "principle", "--title", "Harmless\x1b[1A\x1b[2K\n"+forged,
+		"--body", "Shown.\r\x1b[2KHidden.\n"+forged, "--sources", "https://example.com/a\x07")
+	for name, args := range map[string][]string{
+		"review": {"review"},
+		"get":    {"get", id, "--format", "text"},
+		"list":   {"list", "--kind", "principle", "--format", "text"},
+	} {
+		data, err := runCLI(t, args...)
+		if err != nil {
+			t.Fatalf("%s: %s %v", name, data, err)
+		}
+		got := string(data)
+		if strings.ContainsAny(got, "\x1b\r\x07") {
+			t.Errorf("%s sends control characters to the terminal: %q", name, got)
+		}
+		if !strings.Contains(got, `Harmless\x1b[1A\x1b[2K\n`+forged) {
+			t.Errorf("%s does not show the title's control characters: %q", name, got)
+		}
+		if strings.Contains(got, "\n"+forged) {
+			t.Errorf("%s lets record text start a line that reads as a header: %q", name, got)
+		}
 	}
 }

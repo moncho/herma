@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/moncho/herma/internal/client"
+	"github.com/moncho/herma/internal/safetext"
 	"github.com/moncho/herma/internal/store"
 )
 
@@ -67,19 +68,29 @@ func reviewText(ctx context.Context, c *client.Client, w io.Writer, queue map[st
 			writeProposal(&b, r, names(r.ProjectID))
 		}
 	}
-	b.WriteString("\nAccept on the server: herma --identity owner accept ID [ID ...]\n")
+	// The command names the versions printed above, so accepting applies to
+	// what was read and fails for a proposal edited since.
+	var refs []string
+	for _, s := range sections {
+		for _, r := range pages[s.key].Items {
+			refs = append(refs, recordRef(r.ID, r.Version))
+		}
+	}
+	if len(refs) > 0 {
+		b.WriteString("\nAccept on the server: herma --identity owner accept " + strings.Join(refs, " ") + "\n")
+	}
 	_, err := io.WriteString(w, b.String())
 	return err
 }
 
 func writeProposal(b *strings.Builder, r store.Record, project string) {
-	fmt.Fprintf(b, "%s · %s · by %s · %s\n%s\n", r.ID, project, r.CreatedBy, r.UpdatedAt.UTC().Format("2006-01-02"), r.Title)
+	fmt.Fprintf(b, "%s · %s · by %s · %s\n%s\n", recordRef(r.ID, r.Version), safetext.Line(project), safetext.Line(r.CreatedBy), r.UpdatedAt.UTC().Format("2006-01-02"), safetext.Line(r.Title))
 	writeBody(b, r.Body)
 	if len(r.Terms) > 0 {
-		b.WriteString("  terms: " + strings.Join(r.Terms, ", ") + "\n")
+		b.WriteString("  terms: " + strings.Join(safetext.Lines(r.Terms), ", ") + "\n")
 	}
 	if len(r.Sources) > 0 {
-		b.WriteString("  sources: " + strings.Join(r.Sources, ", ") + "\n")
+		b.WriteString("  sources: " + strings.Join(safetext.Lines(r.Sources), ", ") + "\n")
 	}
 }
 

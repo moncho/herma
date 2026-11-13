@@ -24,7 +24,7 @@ func TestTermsTravelFromProposalToRecall(t *testing.T) {
 	if err != nil || !strings.Contains(string(text), "terms: deadline, estimate, progress report\n") {
 		t.Fatalf("get: %s %v", text, err)
 	}
-	if data, err := runCLI(t, "--identity", "owner", "accept", proposal.ID); err != nil {
+	if data, err := runCLI(t, "--identity", "owner", "accept", v1(proposal.ID)); err != nil {
 		t.Fatalf("accept: %s %v", data, err)
 	}
 	data, err := runCLI(t, "recall", "deadline in a progress report")

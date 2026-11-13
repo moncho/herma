@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/moncho/herma/internal/client"
+	"github.com/moncho/herma/internal/safetext"
 	"github.com/moncho/herma/internal/store"
 )
 
@@ -66,7 +67,7 @@ func reviewInteractive(ctx context.Context, c *client.Client, stdin io.Reader, s
 		writeProposal(&b, item.record, names(item.record.ProjectID))
 		if item.pending {
 			definition, _ := json.MarshalIndent(item.record.Fields["pending"], "  ", "  ")
-			b.WriteString("  pending definition:\n  " + string(definition) + "\n")
+			b.WriteString("  pending definition:\n  " + safetext.Block(string(definition)) + "\n")
 		}
 		var similar *acceptedRecord
 		if !item.pending {
@@ -75,7 +76,7 @@ func reviewInteractive(ctx context.Context, c *client.Client, stdin io.Reader, s
 				return err
 			}
 			if similar != nil {
-				b.WriteString("  looks like a duplicate of accepted " + similar.ID + " · " + similar.Title + "\n")
+				b.WriteString("  looks like a duplicate of accepted " + similar.ID + " · " + safetext.Line(similar.Title) + "\n")
 			}
 		}
 		if _, err := io.WriteString(stdout, b.String()); err != nil {
@@ -126,7 +127,7 @@ func reviewInteractive(ctx context.Context, c *client.Client, stdin io.Reader, s
 		if key == "a" {
 			outcome := reviewOutcome{record: item.record}
 			if similar != nil {
-				if _, err := setStatus(ctx, c, similar.ID, "superseded", nil); err != nil {
+				if _, err := setCurrentStatus(ctx, c, similar.ID, "superseded", nil); err != nil {
 					outcome.note = "accepted, but " + similar.ID + " could not be superseded: " + decisionError(err, similar.ID)
 				} else {
 					outcome.note = "supersedes " + similar.ID
@@ -152,7 +153,7 @@ func reviewInteractive(ctx context.Context, c *client.Client, stdin io.Reader, s
 		}
 		b.WriteString(group.heading + "\n")
 		for _, o := range group.outcomes {
-			line := "  " + o.record.ID + " · " + o.record.Title
+			line := "  " + o.record.ID + " · " + safetext.Line(o.record.Title)
 			if o.note != "" {
 				line += ": " + o.note
 			}

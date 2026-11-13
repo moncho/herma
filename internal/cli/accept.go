@@ -26,56 +26,83 @@ type acceptFailure struct {
 	Error string `json:"error"`
 }
 
+// recordRef names a record at one version, the form accept takes and herma
+// review prints.
+func recordRef(id string, version int64) string {
+	return id + "@" + strconv.FormatInt(version, 10)
+}
+
+// parseRecordRef splits ID@VERSION. A bare ID is refused: accepting applies
+// to the version the reviewer read, never to whatever is current.
+func parseRecordRef(ref string) (string, int64, error) {
+	id, text, found := strings.Cut(ref, "@")
+	version, err := strconv.ParseInt(text, 10, 64)
+	if !found || id == "" || err != nil || version < 1 {
+		return "", 0, fmt.Errorf("accept needs ID@VERSION, the version you read, not %q; herma review prints the command", ref)
+	}
+	return id, version, nil
+}
+
 // accept is the reviewer's shortcut for `update ID --version N --status
-// accepted`: it reads each record's current version itself, accepts several
-// records at once, and with --replaces supersedes the old record only after
+// accepted`: it accepts several records at once, each at the version the
+// reviewer names, and with --replaces supersedes the old record only after
 // the new one is accepted.
 func accept(ctx context.Context, cfg config, args []string, stdout, stderr io.Writer) error {
-	var ids []string
+	var refs []string
 	for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		ids, args = append(ids, args[0]), args[1:]
+		refs, args = append(refs, args[0]), args[1:]
 	}
 	fs := flags("accept", stderr)
 	replaces := fs.String("replaces", "", "record to mark superseded once the single new record is accepted")
-	all := fs.Bool("all", false, "accept every proposed principle, knowledge record and kind")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
 	switch {
-	case *all && (len(ids) > 0 || *replaces != ""):
-		return errors.New("accept --all takes no IDs and no --replaces")
-	case !*all && len(ids) == 0:
-		return errors.New("usage: herma [global flags] accept ID [ID ...] | accept NEW --replaces OLD | accept --all")
-	case *replaces != "" && len(ids) != 1:
-		return errors.New("accept --replaces takes exactly one new record ID")
+	case len(refs) == 0:
+		return errors.New("usage: herma [global flags] accept ID@VERSION [ID@VERSION ...] | accept NEW@VERSION --replaces OLD")
+	case *replaces != "" && len(refs) != 1:
+		return errors.New("accept --replaces takes exactly one new record")
+	}
+	type target struct {
+		id      string
+		version int64
+	}
+	targets := make([]target, 0, len(refs))
+	for _, ref := range refs {
+		id, version, err := parseRecordRef(ref)
+		if err != nil {
+			return err
+		}
+		targets = append(targets, target{id, version})
 	}
 	c, err := cfg.client()
 	if err != nil {
 		return err
-	}
-	if *all {
-		if ids, err = proposedIDs(ctx, c); err != nil {
-			return err
-		}
 	}
 	result := struct {
 		Accepted   []acceptedRecord `json:"accepted"`
 		Superseded []acceptedRecord `json:"superseded,omitempty"`
 		Failed     []acceptFailure  `json:"failed,omitempty"`
 	}{Accepted: []acceptedRecord{}}
-	for _, id := range ids {
+	for _, t := range targets {
+		id := t.id
 		current, err := getRecord(ctx, c, id)
+		if err == nil && current.Version != t.version {
+			err = fmt.Errorf("changed since version %d was shown (now version %d); read it again with herma review", t.version, current.Version)
+		}
 		if err == nil && current.Status != "accepted" {
 			var similar *acceptedRecord
 			if similar, err = similarAccepted(ctx, c, current); err == nil && similar != nil && similar.ID != *replaces {
-				err = errors.New(duplicateMessage(id, *similar))
+				err = errors.New(duplicateMessage(id, t.version, *similar))
 			}
 		}
 		if err != nil {
 			result.Failed = append(result.Failed, acceptFailure{ID: id, Error: explain(err, id)})
 			continue
 		}
-		r, err := setStatus(ctx, c, id, "accepted", nil)
+		// The server checks the version again inside the write, so an edit
+		// that lands after the read above is a conflict, not an acceptance.
+		r, err := setStatus(ctx, c, id, t.version, "accepted", nil)
 		if err != nil {
 			result.Failed = append(result.Failed, acceptFailure{ID: id, Error: explain(err, id)})
 			continue
@@ -83,7 +110,7 @@ func accept(ctx context.Context, cfg config, args []string, stdout, stderr io.Wr
 		result.Accepted = append(result.Accepted, r)
 	}
 	if *replaces != "" && len(result.Failed) == 0 {
-		r, err := setStatus(ctx, c, *replaces, "superseded", nil)
+		r, err := setCurrentStatus(ctx, c, *replaces, "superseded", nil)
 		if err != nil {
 			result.Failed = append(result.Failed, acceptFailure{ID: *replaces, Error: explain(err, *replaces)})
 		} else {
@@ -112,19 +139,25 @@ func getRecord(ctx context.Context, c *client.Client, id string) (store.Record, 
 	return current, nil
 }
 
-// setStatus moves a record to status at its current version; reason, when
-// given, is stored as the review reason of a rejection.
-func setStatus(ctx context.Context, c *client.Client, id, status string, reason *string) (acceptedRecord, error) {
-	path := "/v1/records/" + url.PathEscape(id)
+// setCurrentStatus moves a record to status at whatever version it has now.
+// It suits changes where an unseen edit cannot matter: rejecting, and
+// superseding an accepted record, which agents cannot edit.
+func setCurrentStatus(ctx context.Context, c *client.Client, id, status string, reason *string) (acceptedRecord, error) {
 	current, err := getRecord(ctx, c, id)
 	if err != nil {
 		return acceptedRecord{}, err
 	}
+	return setStatus(ctx, c, id, current.Version, status, reason)
+}
+
+// setStatus moves a record to status at the given version; reason, when
+// given, is stored as the review reason of a rejection.
+func setStatus(ctx context.Context, c *client.Client, id string, version int64, status string, reason *string) (acceptedRecord, error) {
 	requestID, err := randomID()
 	if err != nil {
 		return acceptedRecord{}, err
 	}
-	data, err := c.Do(ctx, http.MethodPatch, path, nil, store.UpdateInput{Version: current.Version, Status: &status, ReviewReason: reason}, requestID)
+	data, err := c.Do(ctx, http.MethodPatch, "/v1/records/"+url.PathEscape(id), nil, store.UpdateInput{Version: version, Status: &status, ReviewReason: reason}, requestID)
 	if err != nil {
 		return acceptedRecord{}, err
 	}
@@ -143,30 +176,4 @@ func explain(err error, id string) string {
 		message += "; add them with: herma update " + id + " --version N --sources SOURCE"
 	}
 	return message
-}
-
-// proposedIDs lists the review queue that --all accepts: proposed knowledge,
-// principles and kinds (pending kind changes are not a status change).
-func proposedIDs(ctx context.Context, c *client.Client) ([]string, error) {
-	var ids []string
-	for _, kind := range []string{"principle", "knowledge", "kind"} {
-		for offset := 0; ; offset += 200 {
-			query := url.Values{"kind": {kind}, "status": {"proposed"}, "limit": {"200"}, "offset": {strconv.Itoa(offset)}}
-			data, err := c.Do(ctx, http.MethodGet, "/v1/records", query, nil, "")
-			if err != nil {
-				return nil, err
-			}
-			var page store.ListResult
-			if err := json.Unmarshal(data, &page); err != nil {
-				return nil, err
-			}
-			for _, r := range page.Items {
-				ids = append(ids, r.ID)
-			}
-			if len(page.Items) < 200 {
-				break
-			}
-		}
-	}
-	return ids, nil
 }

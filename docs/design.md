@@ -18,6 +18,8 @@ strict input parsing, context assembly and export. `internal/store` owns
 validation, references, search and all transactional writes.
 `internal/project` resolves a repository's nonsecret binding; `internal/hooks`
 merges client hook configurations while preserving other settings.
+`internal/safetext` shows control characters in record text as escapes; the CLI's
+text output and the server's text context both print record text through it.
 
 The product scope is memory that shapes agent behavior: principles first,
 reviewed knowledge second. Agents propose principle and knowledge records and the

@@ -86,6 +86,6 @@ func titleSimilarity(a, b map[string]bool) float64 {
 
 // duplicateMessage says how to resolve a proposal that duplicates an
 // accepted record.
-func duplicateMessage(id string, similar acceptedRecord) string {
-	return "looks like a duplicate of accepted " + similar.Kind + " " + similar.ID + " (" + similar.Title + "); accept " + id + " --replaces " + similar.ID + " to supersede it, or reject " + id
+func duplicateMessage(id string, version int64, similar acceptedRecord) string {
+	return "looks like a duplicate of accepted " + similar.Kind + " " + similar.ID + " (" + similar.Title + "); accept " + recordRef(id, version) + " --replaces " + similar.ID + " to supersede it, or reject " + id
 }

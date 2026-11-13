@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/moncho/herma/internal/safetext"
 )
 
 // textFormat is the compact rendering sessions read. Record text is indented
@@ -156,7 +158,9 @@ func writeIndented(b *strings.Builder, text string) {
 	if text == "" {
 		return
 	}
-	text = lineBreaks.Replace(text)
+	// Whatever a terminal would act on is shown as an escape, inside the bytes
+	// the budget counts.
+	text = safetext.Block(lineBreaks.Replace(text))
 	for _, line := range strings.Split(text, "\n") {
 		if line != "" {
 			b.WriteString("    " + line)
@@ -204,4 +208,6 @@ func writeTextFooter(b *strings.Builder, c projectContext) {
 	b.WriteString("Get the full record with: herma get <id>\n")
 }
 
-func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
+// oneLine collapses whitespace, line breaks included, and shows any other
+// control character as an escape.
+func oneLine(s string) string { return safetext.Line(strings.Join(strings.Fields(s), " ")) }

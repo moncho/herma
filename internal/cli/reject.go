@@ -43,7 +43,7 @@ func reject(ctx context.Context, cfg config, args []string, stdout, stderr io.Wr
 		Failed   []acceptFailure  `json:"failed,omitempty"`
 	}{Rejected: []acceptedRecord{}}
 	for _, id := range ids {
-		r, err := setStatus(ctx, c, id, "rejected", reviewReason)
+		r, err := setCurrentStatus(ctx, c, id, "rejected", reviewReason)
 		if err != nil {
 			result.Failed = append(result.Failed, acceptFailure{ID: id, Error: explain(err, id)})
 			continue

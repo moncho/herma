@@ -243,3 +243,18 @@ func TestTextContextSizesTheProjectAsRendered(t *testing.T) {
 		t.Fatalf("clipped project body not reported:\n%s", text)
 	}
 }
+
+func TestTextContextShowsControlCharactersInsteadOfSendingThem(t *testing.T) {
+	h, s := apiTestHandler(t, nil)
+	project := createContextRecord(t, s, store.CreateInput{Kind: "project", Title: "Escapes\x1b[2K"})
+	createContextRecord(t, s, store.CreateInput{Kind: "task", Title: "Task\x1b[1A", Body: "Shown.\x1b[2K\u202eHidden.\n\tSecond line.", Owner: "session\x07", ProjectID: project.ID})
+	text := requestTextContext(t, h, project.ID, "", defaultContextBytes)
+	if strings.ContainsAny(text, "\x1b\x07\u202e") {
+		t.Fatalf("control characters reach the reader: %q", text)
+	}
+	for _, want := range []string{`project Escapes\x1b[2K (`, `owner session\x07`, "    Task\\x1b[1A\n", "    Shown.\\x1b[2K\\u202eHidden.\n    \tSecond line.\n"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("text lacks %q:\n%s", want, text)
+		}
+	}
+}

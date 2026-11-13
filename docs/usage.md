@@ -35,17 +35,21 @@ reviewer reads it and accepts it:
 
 ```sh
 herma review
-herma --identity owner accept RECORD_ID [RECORD_ID ...]
-herma --identity owner accept NEW_ID --replaces OLD_ID
-herma --identity owner accept --all
+herma --identity owner accept RECORD_ID@VERSION [RECORD_ID@VERSION ...]
+herma --identity owner accept NEW_ID@VERSION --replaces OLD_ID
 herma --identity owner reject RECORD_ID [RECORD_ID ...] [--reason TEXT]
 ```
 
-`herma review` prints each proposal for reading: its ID, project (by name, or
-`global`), author and date, then the title, the full body and the sources, grouped
-under Principles, Knowledge, Kinds and Pending kind changes. A line counts what
-`--limit` left out. Any identity can run it; `--format json` prints the raw lists
-instead.
+`herma review` prints each proposal for reading: its ID and version
+(`rec_…@3`), project (by name, or `global`), author and date, then the title,
+the full body and the sources, grouped under Principles, Knowledge, Kinds and
+Pending kind changes. A line counts what `--limit` left out, and the last line
+is the `accept` command for the proposals shown, at the versions shown. Any
+identity can run it; `--format json` prints the raw lists instead.
+
+Record text is written by agents, so the text output of `review`, `get`,
+`list` and `context` shows control characters as escapes such as `\x1b` or `\n` instead of
+sending them to the terminal.
 
 On the server, the reviewer can go through the same queue and decide as they read:
 
@@ -60,12 +64,13 @@ edited meanwhile is reported under Failed and left as it is. Quitting, or the en
 of input, keeps the decisions already made. A summary of what was accepted,
 rejected, skipped and failed ends the run, which exits nonzero if any failed.
 
-`accept` reads each record's current version itself and reports every record
-under `accepted`, `superseded` or `failed`; one failure does not stop the
-others, but the command exits nonzero. `--replaces` marks the old record
-`superseded` only after the new one is accepted, so one of them always applies.
-`--all` accepts every proposed principle, knowledge record and kind; pending kind
-changes still need `update KIND_ID --version N --accept-pending`.
+`accept` takes each record as `ID@VERSION`, the version you read, and refuses a
+bare ID: a proposal an agent edited after you read it is reported under `failed`
+and stays proposed. It reports every record under `accepted`, `superseded` or
+`failed`; one failure does not stop the others, but the command exits nonzero.
+`--replaces` marks the old record `superseded` only after the new one is
+accepted, so one of them always applies. Pending kind changes need
+`update KIND_ID --version N --accept-pending`.
 
 Before accepting, `accept` and `review -i` look for an accepted record of the
 same kind whose title says nearly the same thing (most of the words in common).

@@ -14,7 +14,7 @@ func TestAcceptRefusesALikelyDuplicate(t *testing.T) {
 	startServe(t)
 	old := acceptedPrinciple(t, "Never add Claude attribution to commits or PRs")
 	proposal := proposePrinciple(t, "Never add Claude attribution to commits, PRs or messages", "--sources", "https://example.com/new")
-	out, err := runAccept(t, proposal)
+	out, err := runAccept(t, v1(proposal))
 	if err == nil || len(out.Accepted) != 0 || len(out.Failed) != 1 {
 		t.Fatalf("%+v %v", out, err)
 	}
@@ -28,7 +28,7 @@ func TestAcceptReplacesTheRecordItDuplicates(t *testing.T) {
 	startServe(t)
 	old := acceptedPrinciple(t, "Write PR summaries as short prose, not bullets")
 	proposal := proposePrinciple(t, "Write PR summaries as short prose, not bullets", "--sources", "https://example.com/new")
-	out, err := runAccept(t, proposal, "--replaces", old)
+	out, err := runAccept(t, v1(proposal), "--replaces", old)
 	if err != nil || len(out.Accepted) != 1 || len(out.Superseded) != 1 {
 		t.Fatalf("%+v %v", out, err)
 	}
@@ -40,7 +40,7 @@ func TestAcceptIgnoresRecordsThatMerelyShareWords(t *testing.T) {
 	startServe(t)
 	acceptedPrinciple(t, "Never add Claude attribution to commits or PRs")
 	proposal := proposePrinciple(t, "Never commit specs, plans or process artifacts", "--sources", "https://example.com/new")
-	if out, err := runAccept(t, proposal); err != nil || len(out.Accepted) != 1 {
+	if out, err := runAccept(t, v1(proposal)); err != nil || len(out.Accepted) != 1 {
 		t.Fatalf("%+v %v", out, err)
 	}
 }

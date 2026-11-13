@@ -22,6 +22,9 @@ func runAccept(t *testing.T, args ...string) (acceptOutput, error) {
 	return out, err
 }
 
+// v1 names a record that has not been edited since it was created.
+func v1(id string) string { return id + "@1" }
+
 func proposePrinciple(t *testing.T, title string, extra ...string) string {
 	t.Helper()
 	args := append([]string{"--kind", "principle", "--title", title}, extra...)
@@ -32,7 +35,7 @@ func TestAcceptSeveralProposalsAtOnce(t *testing.T) {
 	startServe(t)
 	a := proposePrinciple(t, "First rule", "--sources", "https://example.com/a")
 	b := proposePrinciple(t, "Second rule", "--sources", "https://example.com/b")
-	out, err := runAccept(t, a, b)
+	out, err := runAccept(t, v1(a), v1(b))
 	if err != nil || len(out.Accepted) != 2 || len(out.Failed) != 0 {
 		t.Fatalf("%+v %v", out, err)
 	}
@@ -47,7 +50,7 @@ func TestAcceptReplacesSupersedesOnlyAfterAccepting(t *testing.T) {
 	startServe(t)
 	old := createAs(t, "owner", "--kind", "principle", "--title", "Old rule", "--status", "accepted", "--sources", "https://example.com/old").ID
 	replacement := proposePrinciple(t, "New rule", "--sources", "https://example.com/new")
-	out, err := runAccept(t, replacement, "--replaces", old)
+	out, err := runAccept(t, v1(replacement), "--replaces", old)
 	if err != nil || len(out.Accepted) != 1 || len(out.Superseded) != 1 || out.Superseded[0].ID != old {
 		t.Fatalf("%+v %v", out, err)
 	}
@@ -63,7 +66,7 @@ func TestAcceptKeepsTheOldRecordWhenTheReplacementFails(t *testing.T) {
 	startServe(t)
 	old := createAs(t, "owner", "--kind", "principle", "--title", "Old rule", "--status", "accepted", "--sources", "https://example.com/old").ID
 	unsourced := proposePrinciple(t, "New rule without sources")
-	out, err := runAccept(t, unsourced, "--replaces", old)
+	out, err := runAccept(t, v1(unsourced), "--replaces", old)
 	if err == nil || len(out.Failed) != 1 || len(out.Superseded) != 0 {
 		t.Fatalf("%+v %v", out, err)
 	}
@@ -79,17 +82,43 @@ func TestAcceptReportsEachFailureAndAcceptsTheRest(t *testing.T) {
 	startServe(t)
 	good := proposePrinciple(t, "Good rule", "--sources", "https://example.com/good")
 	bad := proposePrinciple(t, "Rule without sources")
-	out, err := runAccept(t, bad, good)
+	out, err := runAccept(t, v1(bad), v1(good))
 	if err == nil || len(out.Accepted) != 1 || out.Accepted[0].ID != good || len(out.Failed) != 1 || out.Failed[0].ID != bad {
 		t.Fatalf("%+v %v", out, err)
 	}
 }
 
-func TestAcceptAllTakesTheReviewQueue(t *testing.T) {
+func TestAcceptRefusesAProposalEditedSinceItWasRead(t *testing.T) {
+	startServe(t)
+	id := proposePrinciple(t, "Reviewed rule", "--body", "What the reviewer read.", "--sources", "https://example.com/r")
+	if data, err := runCLI(t, "update", id, "--version", "1", "--body", "What the agent wrote afterwards."); err != nil {
+		t.Fatalf("edit: %s %v", data, err)
+	}
+	out, err := runAccept(t, v1(id))
+	if err == nil || len(out.Accepted) != 0 || len(out.Failed) != 1 || !strings.Contains(out.Failed[0].Error, "changed since version 1") {
+		t.Fatalf("%+v %v", out, err)
+	}
+	if r := cliRecord(t, "get", id); r.Status != "proposed" {
+		t.Fatalf("status %q", r.Status)
+	}
+	if out, err := runAccept(t, id+"@2"); err != nil || len(out.Accepted) != 1 {
+		t.Fatalf("accept at the edited version: %+v %v", out, err)
+	}
+}
+
+func TestAcceptTakesTheCommandReviewPrints(t *testing.T) {
 	startServe(t)
 	principle := proposePrinciple(t, "Queued rule", "--sources", "https://example.com/p")
 	knowledge := createAs(t, "local-agent", "--kind", "knowledge", "--title", "Queued fact", "--sources", "https://example.com/k").ID
-	out, err := runAccept(t, "--all")
+	review, err := runCLI(t, "review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, command, found := strings.Cut(string(review), "herma --identity owner accept ")
+	if !found {
+		t.Fatalf("review prints no accept command:\n%s", review)
+	}
+	out, err := runAccept(t, strings.Fields(command)...)
 	if err != nil || len(out.Accepted) != 2 {
 		t.Fatalf("%+v %v", out, err)
 	}
@@ -105,10 +134,12 @@ func TestAcceptRejectsAmbiguousArguments(t *testing.T) {
 	a := proposePrinciple(t, "A", "--sources", "https://example.com/a")
 	b := proposePrinciple(t, "B", "--sources", "https://example.com/b")
 	for name, args := range map[string][]string{
-		"nothing":            {},
-		"all with ids":       {"--all", a},
-		"replaces with many": {a, b, "--replaces", a},
-		"replaces with all":  {"--all", "--replaces", a},
+		"nothing":              {},
+		"no version":           {a},
+		"version zero":         {a + "@0"},
+		"version not a number": {a + "@latest"},
+		"all":                  {"--all"},
+		"replaces with many":   {v1(a), v1(b), "--replaces", a},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := runCLI(t, append([]string{"--identity", "owner", "accept"}, args...)...); err == nil {
@@ -121,7 +152,7 @@ func TestAcceptRejectsAmbiguousArguments(t *testing.T) {
 func TestAcceptNeedsTheReviewer(t *testing.T) {
 	startServe(t)
 	id := proposePrinciple(t, "Rule", "--sources", "https://example.com/r")
-	data, err := runCLI(t, "--identity", "local-agent", "accept", id)
+	data, err := runCLI(t, "--identity", "local-agent", "accept", v1(id))
 	if err == nil {
 		t.Fatalf("agent accepted: %s", data)
 	}

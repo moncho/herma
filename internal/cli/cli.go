@@ -55,9 +55,8 @@ Session memory
 Review (reviewer identity, local socket only)
   review [--format text|json]                      Show what is waiting for review
   review -i                                        Accept, reject or skip items one by one
-  accept ID [ID ...]                               Accept proposals as they are now
-  accept NEW --replaces OLD                        Accept NEW, then mark OLD superseded
-  accept --all                                     Accept everything in the queue
+  accept ID@VERSION [ID@VERSION ...]               Accept proposals at the version herma review showed
+  accept NEW@VERSION --replaces OLD                Accept NEW, then mark OLD superseded
   reject ID [ID ...] [--reason TEXT]               Reject records, proposed or accepted
 
 Custom kinds

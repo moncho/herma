@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/moncho/herma/internal/safetext"
 	"github.com/moncho/herma/internal/store"
 )
 
@@ -29,7 +30,7 @@ func listText(w io.Writer, page store.ListResult, offset int) error {
 	}
 	var b strings.Builder
 	for _, r := range page.Items {
-		fmt.Fprintf(&b, "%s  %-*s  %-*s  %s  %s", r.ID, kindWidth, r.Kind, statusWidth, r.Status, r.UpdatedAt.UTC().Format("2006-01-02"), r.Title)
+		fmt.Fprintf(&b, "%s  %-*s  %-*s  %s  %s", r.ID, kindWidth, r.Kind, statusWidth, r.Status, r.UpdatedAt.UTC().Format("2006-01-02"), safetext.Line(r.Title))
 		if r.Archived {
 			b.WriteString("  [archived]")
 		}
@@ -46,32 +47,32 @@ func listText(w io.Writer, page store.ListResult, offset int) error {
 // it and when, its lists and typed fields, then the title and body.
 func recordText(w io.Writer, r store.Record, project string) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s · %s · %s · v%d · %s", r.ID, r.Kind, r.Status, r.Version, project)
+	fmt.Fprintf(&b, "%s · %s · %s · v%d · %s", r.ID, r.Kind, r.Status, r.Version, safetext.Line(project))
 	if r.Archived {
 		b.WriteString(" · archived")
 	}
 	b.WriteString("\n")
 	day := func(at time.Time) string { return at.UTC().Format("2006-01-02") }
-	fmt.Fprintf(&b, "created by %s %s · updated by %s %s", r.CreatedBy, day(r.CreatedAt), r.UpdatedBy, day(r.UpdatedAt))
+	fmt.Fprintf(&b, "created by %s %s · updated by %s %s", safetext.Line(r.CreatedBy), day(r.CreatedAt), safetext.Line(r.UpdatedBy), day(r.UpdatedAt))
 	if r.ReviewedAt != nil {
-		fmt.Fprintf(&b, " · reviewed by %s %s", r.ReviewedBy, day(*r.ReviewedAt))
+		fmt.Fprintf(&b, " · reviewed by %s %s", safetext.Line(r.ReviewedBy), day(*r.ReviewedAt))
 	}
 	b.WriteString("\n")
 	if r.ReviewReason != "" {
-		b.WriteString("reason: " + r.ReviewReason + "\n")
+		b.WriteString("reason: " + safetext.Line(r.ReviewReason) + "\n")
 	}
 	if r.Priority != 0 {
 		b.WriteString("priority: " + strconv.Itoa(r.Priority) + "\n")
 	}
 	if r.Owner != "" {
-		b.WriteString("owner: " + r.Owner + "\n")
+		b.WriteString("owner: " + safetext.Line(r.Owner) + "\n")
 	}
 	for _, list := range []struct {
 		name  string
 		items []string
 	}{{"tags", r.Tags}, {"terms", r.Terms}, {"links", r.Links}, {"sources", r.Sources}} {
 		if len(list.items) > 0 {
-			b.WriteString(list.name + ": " + strings.Join(list.items, ", ") + "\n")
+			b.WriteString(list.name + ": " + strings.Join(safetext.Lines(list.items), ", ") + "\n")
 		}
 	}
 	if len(r.Fields) > 0 {
@@ -82,22 +83,23 @@ func recordText(w io.Writer, r store.Record, project string) error {
 		sort.Strings(names)
 		for _, name := range names {
 			value, _ := json.Marshal(r.Fields[name])
-			b.WriteString(name + ": " + string(value) + "\n")
+			b.WriteString(safetext.Line(name) + ": " + safetext.Line(string(value)) + "\n")
 		}
 	}
-	b.WriteString("\n" + r.Title + "\n")
+	b.WriteString("\n" + safetext.Line(r.Title) + "\n")
 	writeBody(&b, r.Body)
 	_, err := io.WriteString(w, b.String())
 	return err
 }
 
-// writeBody indents a body by two spaces, keeping blank lines blank.
+// writeBody indents a body by two spaces, keeping blank lines blank. Control
+// characters other than line breaks and tabs are shown as escapes.
 func writeBody(b *strings.Builder, body string) {
 	body = strings.TrimRight(body, "\n")
 	if body == "" {
 		return
 	}
-	for _, line := range strings.Split(body, "\n") {
+	for _, line := range strings.Split(safetext.Block(body), "\n") {
 		if line == "" {
 			b.WriteString("\n")
 			continue
