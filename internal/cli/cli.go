@@ -76,6 +76,7 @@ Setup and server
   project bind --project ID [--dir PATH]           Bind a checkout to a project
   hook install --client claude|codex|both          Install the user-level session hook
   hook session-start [--client claude|codex]       Run as the session hook
+  hook refresh [--seen STATE]                      Report principles changed since STATE
   serve [--db PATH] [--listen HOST:PORT]           Run the server
   backup status                                    Show automatic snapshot status
   restore SNAPSHOT|DIR [--db PATH]                 Restore a snapshot (server stopped)

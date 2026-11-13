@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,7 +37,7 @@ const (
 
 func hook(ctx context.Context, cfg config, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: herma hook install --client claude|codex|both [--dir CHECKOUT] | herma hook session-start [--client claude|codex]")
+		return errors.New("usage: herma hook install --client claude|codex|both [--dir CHECKOUT] | herma hook session-start [--client claude|codex] | herma hook refresh [--seen STATE]")
 	}
 	switch args[0] {
 	case "install":
@@ -51,6 +53,13 @@ func hook(ctx context.Context, cfg config, args []string, stdin io.Reader, stdou
 			return errors.New("hook session-start --client must be claude or codex")
 		}
 		return sessionStart(ctx, cfg, *requireToken, *client, stdin, stdout)
+	case "refresh":
+		fs := flags("hook refresh", stderr)
+		seen := fs.String("seen", "", "the state an earlier refresh returned; what changed since is reported")
+		if err := parse(fs, args[1:]); err != nil {
+			return err
+		}
+		return refreshPrinciples(ctx, cfg, *seen, stdout)
 	default:
 		return fmt.Errorf("unknown hook command %q", args[0])
 	}
@@ -307,6 +316,72 @@ func sessionStart(ctx context.Context, cfg config, requireToken bool, client str
 	return output(stdout, result)
 }
 
+// refreshPrinciples brings Claude's rules files up to date and tells a running
+// session which principles changed since the state it last heard, so a
+// principle accepted mid-session applies without a restart. The state names
+// the global and project principles by digest. Without seen it only reports
+// the current state, the baseline a session takes when it starts.
+func refreshPrinciples(ctx context.Context, cfg config, seen string, stdout io.Writer) error {
+	if os.Getenv("HERMA_TOKEN") == "" {
+		if role, err := cfg.identityRole(); err == nil && role == store.RoleReviewer {
+			return errors.New("hook refresh refuses the reviewer identity; use an agent identity")
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, hookTimeout)
+	defer cancel()
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	global, err := cfg.principlesFile(ctx, "")
+	if err != nil {
+		return err
+	}
+	// A file that cannot be written does not stop the session hearing of the change.
+	_, _ = rules.SyncGlobal(home, global)
+	var projectData []byte
+	var projectPath string
+	binding, bindingPath, err := project.Discover(cwd)
+	switch {
+	case errors.Is(err, project.ErrNoBinding):
+	case err != nil:
+		return err
+	case isHomeDir(filepath.Dir(bindingPath)):
+		// Session start puts these in the context, not in a rules file; they
+		// are not followed here.
+	default:
+		if projectData, err = cfg.principlesFile(ctx, binding.ProjectID); err != nil {
+			return err
+		}
+		checkout := filepath.Dir(bindingPath)
+		projectPath = filepath.Join(checkout, rules.Path)
+		_, _ = rules.Sync(checkout, projectData)
+	}
+	digest := func(data []byte) string {
+		sum := sha256.Sum256(data)
+		return hex.EncodeToString(sum[:8])
+	}
+	result := map[string]string{"seen": digest(global) + "." + digest(projectData)}
+	if seen != "" && seen != result["seen"] {
+		before, _, _ := strings.Cut(seen, ".")
+		var globalSection, projectSection string
+		if before != digest(global) {
+			globalSection = principlesSection("Global", filepath.Join(home, rules.GlobalPath), global)
+		}
+		if !strings.HasSuffix(seen, "."+digest(projectData)) && projectPath != "" {
+			projectSection = principlesSection("Project", projectPath, projectData)
+		}
+		if text := joinSections(globalSection, projectSection); text != "" {
+			result["context"] = text
+		}
+	}
+	return output(stdout, result)
+}
+
 // legacySessionStart answers a hook installed before --client existed with the
 // JSON packet, principles included, and asks for a reinstall.
 func legacySessionStart(ctx context.Context, cfg config, binding project.Binding, stdout io.Writer) error {
@@ -526,7 +601,11 @@ func (cfg config) principlesFile(ctx context.Context, id string) ([]byte, error)
 	if err != nil {
 		return nil, err
 	}
-	data, err := c.Text(ctx, "/v1/principles", url.Values{"project_id": {id}})
+	var query url.Values // none asks for the global principles
+	if id != "" {
+		query = url.Values{"project_id": {id}}
+	}
+	data, err := c.Text(ctx, "/v1/principles", query)
 	if err != nil {
 		return nil, err
 	}

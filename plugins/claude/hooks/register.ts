@@ -8,8 +8,16 @@ type Options = { herma: string; credentials: string; identity: string; url: stri
 const CLEARED_ENV = { HERMA_TOKEN: '', HERMA_IDENTITY: '', HERMA_CREDENTIALS: '', HERMA_SOCKET: '', HERMA_URL: '' }
 
 // What the hooks share: the herma argv prefix, the last status shown and the
-// refresh timer running in this module environment.
-type State = { base: string[]; last: HermaStatus | undefined; timer?: Timer }
+// refresh timer running in this module environment. `seen` names the
+// principles the model has, as `herma hook refresh` states them; `changed` is
+// what differs from them now, waiting for the next prompt to carry it.
+type State = {
+  base: string[]
+  last: HermaStatus | undefined
+  timer?: Timer
+  seen?: string
+  changed?: { seen: string; context: string }
+}
 
 const REFRESH_MS = 60_000
 const FIRST_TIMEOUT_MS = 5_000
@@ -58,11 +66,30 @@ async function refresh($: EngineInterface, state: State, timeoutMs = REFRESH_TIM
   return next
 }
 
+// followPrinciples asks herma what changed in the principles since the model
+// last heard. The first answer is only the baseline: session start loaded
+// those. It is best effort; older herma has no `hook refresh` and changes nothing.
+async function followPrinciples($: EngineInterface, state: State): Promise<void> {
+  try {
+    const argv = [...state.base, 'hook', 'refresh', ...(state.seen ? ['--seen', state.seen] : [])]
+    const ran = await $.process.run(argv, { env: CLEARED_ENV, timeoutMs: REFRESH_TIMEOUT_MS })
+    if (ran.exitCode !== 0) return
+    const doc = JSON.parse(ran.stdout) as { seen?: unknown; context?: unknown }
+    if (typeof doc?.seen !== 'string' || doc.seen === '') return
+    if (!state.seen) state.seen = doc.seen
+    else if (typeof doc.context === 'string' && doc.context !== '') state.changed = { seen: doc.seen, context: doc.context }
+    else state.changed = undefined
+  } catch { /* the next refresh asks again */ }
+}
+
 // keepFresh starts the refresh loop unless one already runs in this module
 // environment; a reload cancels the old environment's timer.
 function keepFresh($: EngineInterface, state: State): void {
   if (state.timer) return
-  state.timer = $.clock.every(REFRESH_MS, () => { refresh($, state).catch(() => {}) })
+  state.timer = $.clock.every(REFRESH_MS, () => {
+    refresh($, state).catch(() => {})
+    followPrinciples($, state)
+  })
 }
 
 function stopRefreshing(state: State): void {
@@ -112,12 +139,24 @@ export const register: Register = (on, options) => {
     }
     const status = await refresh($, state, FIRST_TIMEOUT_MS)
     // Only older herma, which cannot report a server outside a checkout, leaves the plugin silent.
-    if (status.kind !== 'unbound') keepFresh($, state)
+    if (status.kind !== 'unbound') {
+      await followPrinciples($, state)
+      keepFresh($, state)
+    }
     if (isUsable(status)) {
       await $.tool.register(RECALL_TOOL)
       await $.tool.register(GET_TOOL)
     }
     return started
+  })
+
+  // Principles accepted while the session runs reach the model with its next prompt.
+  on('prompt.submit', ($, e, next) => {
+    const changed = state.changed
+    if (!changed) return next(e)
+    state.changed = undefined
+    state.seen = changed.seen
+    return next({ ...e, context: [...(e.context ?? []), changed.context] })
   })
 
   on('tool.call', { tool: 'mcp__herma__recall' }, ($, e) => serve($, state, o, recallArgs(e as unknown as Record<string, unknown>)))

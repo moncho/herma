@@ -224,6 +224,13 @@ They are registered only in a bound checkout when the identity is an agent,
 unlike the status line. If
 herma cannot be launched, the tool call returns an error.
 
+The plugin also keeps a running session's principles current. Once a minute
+it runs `herma hook refresh`, which rewrites the rules files as the session
+hook does and reports the principles that changed since the session last heard
+of them; the changed principles then reach the model with the next prompt, so a
+principle accepted mid-session applies without a restart. Codex sessions, and
+Claude sessions without the plugin, pick changes up at their next session start.
+
 The plugin also carries the `/herma:review-principles` workflow. It reviews a
 diff (the current branch against the default branch plus uncommitted work, or
 the git range or PR reference given as its argument) against the accepted

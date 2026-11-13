@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 const options = { herma: '/herma/bin/herma', credentials: '/herma/.herma/credentials.json', identity: 'local-agent', url: 'http://127.0.0.1:9999' }
 const base = ['/herma/bin/herma', '--url', 'http://127.0.0.1:9999', '--credentials', '/herma/.herma/credentials.json', '--identity', 'local-agent']
 const cleared = { HERMA_TOKEN: '', HERMA_IDENTITY: '', HERMA_CREDENTIALS: '', HERMA_SOCKET: '', HERMA_URL: '' }
-const SUBCOMMANDS = ['status', 'recall', 'get']
+const SUBCOMMANDS = ['status', 'recall', 'get', 'refresh']
 
 // sub names the herma subcommand an argv runs.
 const sub = (argv: readonly string[]) => argv.find(a => SUBCOMMANDS.includes(a)) ?? ''
@@ -235,4 +235,56 @@ test('a failing status line or toast does not break the session', { options }, a
   const result = await $.tool.call({ tool: 'mcp__herma__recall', query: 'pruning' })
   await clock.advance(60_000)
   expect(result.result).toBe('{"results":[]}')
+})
+
+test('principles changed mid-session reach the model with the next prompt, once', { options }, async ($: any, on: any) => {
+  const calls: string[][] = []
+  const answers: Record<string, { exitCode: number; stdout: string }> = {
+    status: { exitCode: 0, stdout: bound },
+    refresh: { exitCode: 0, stdout: '{"seen":"a.a"}' },
+  }
+  fakeHerma(on, answers, calls)
+  const entered: Array<readonly string[] | undefined> = []
+  on('prompt.submit', (_$: unknown, e: { text: string; context?: readonly string[] }) => {
+    entered.push(e.context)
+    return { text: e.text, context: e.context }
+  })
+  const clock = engine(on)
+  await $.session.start(start)
+  // The baseline is what session start loaded: nothing to announce.
+  expect(calls.filter(c => sub(c) === 'refresh')).toEqual([[...base, 'hook', 'refresh']])
+  await $.prompt.submit({ text: 'first' })
+  expect(entered.at(-1)).toBe(undefined)
+
+  answers.refresh = { exitCode: 0, stdout: JSON.stringify({ seen: 'a.b', context: '## Project principles changed\nNew rule' }) }
+  await clock.advance(60_000)
+  await clock.settle()
+  expect(calls.filter(c => sub(c) === 'refresh').at(-1)).toEqual([...base, 'hook', 'refresh', '--seen', 'a.a'])
+  await $.prompt.submit({ text: 'second' })
+  expect(entered.at(-1)).toEqual(['## Project principles changed\nNew rule'])
+  await $.prompt.submit({ text: 'again, before the next refresh' })
+  expect(entered.at(-1)).toBe(undefined)
+
+  answers.refresh = { exitCode: 0, stdout: '{"seen":"a.b"}' }
+  await clock.advance(60_000)
+  await clock.settle()
+  expect(calls.filter(c => sub(c) === 'refresh').at(-1)).toEqual([...base, 'hook', 'refresh', '--seen', 'a.b'])
+  await $.prompt.submit({ text: 'third' })
+  expect(entered.at(-1)).toBe(undefined)
+})
+
+test('a herma without hook refresh leaves prompts alone', { options }, async ($: any, on: any) => {
+  const calls: string[][] = []
+  fakeHerma(on, { status: { exitCode: 0, stdout: bound } }, calls)
+  const entered: Array<readonly string[] | undefined> = []
+  on('prompt.submit', (_$: unknown, e: { text: string; context?: readonly string[] }) => {
+    entered.push(e.context)
+    return { text: e.text, context: e.context }
+  })
+  const clock = engine(on)
+  await $.session.start(start)
+  await clock.advance(60_000)
+  await clock.settle()
+  await $.prompt.submit({ text: 'hello' })
+  expect(entered).toEqual([undefined])
 })
