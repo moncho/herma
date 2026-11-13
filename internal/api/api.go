@@ -139,7 +139,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	author := store.Author{Name: id.actor, Role: id.role}
-	// MCP carries reads over POST; its one write checks the role itself.
+	// MCP carries reads over POST; the store refuses its writes from a
+	// read-only identity.
 	if r.URL.Path == "/mcp" {
 		h.mcp(w, r, author)
 		return

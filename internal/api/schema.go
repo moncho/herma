@@ -31,7 +31,7 @@ func schemaDocument(kinds []store.Kind) map[string]any {
 		},
 		"endpoints": []map[string]string{
 			{"method": "GET", "path": "/health", "purpose": "unauthenticated liveness"},
-			{"method": "POST", "path": "/mcp", "purpose": "Model Context Protocol over Streamable HTTP (stateless, one JSON response per request); tools recall, get, principles and propose; same bearer tokens and roles"},
+			{"method": "POST", "path": "/mcp", "purpose": "Model Context Protocol over Streamable HTTP (stateless, one JSON response per request); tools recall, get, principles, propose, context, create and update; same bearer tokens and roles"},
 			{"method": "GET", "path": "/v1/schema", "purpose": "this API description"},
 			{"method": "GET", "path": "/v1/whoami", "purpose": "the authenticated identity, its role, and the listener (tcp or socket) that received the request"},
 			{"method": "GET", "path": "/v1/backup", "purpose": "automatic snapshot status: enabled, directory, interval, keep count, last success, last error and stale; {\"enabled\":false} when herma serve runs without --backup-dir"},
@@ -48,7 +48,7 @@ func schemaDocument(kinds []store.Kind) map[string]any {
 		"roles": map[string]string{
 			"reviewer":  "every change, including accepting, rejecting and superseding knowledge and principles; accepted only on the local Unix socket (403 reviewer_requires_socket over TCP)",
 			"agent":     "read; write coordination records; create knowledge and principles as proposed and edit or archive them while proposed",
-			"read-only": "read, search, context and history; every POST or PATCH returns 403 forbidden",
+			"read-only": "read, search, context and history, including the read tools of POST /mcp; every other POST or PATCH returns 403 forbidden, and the MCP write tools answer with an error",
 		},
 		"review":       "accepted knowledge and principles require at least one source; agents cannot change accepted, rejected or superseded records; forbidden writes return 403 forbidden and change nothing",
 		"list_filters": []string{"kind", "project_id", "global", "status", "owner", "tag", "q", "where", "sort", "include_archived", "limit", "offset"},
@@ -59,7 +59,7 @@ func schemaDocument(kinds []store.Kind) map[string]any {
 			"query": map[string]string{
 				"project_id":      "required unarchived project ID",
 				"max_bytes":       "complete response bytes in the requested format, including metadata and newline; default 10000, minimum 2048, maximum 65536",
-				"format":          "json (default), text or summary; text is the compact rendering sessions read; summary is one line of section counts (empty when nothing is open) that ignores max_bytes and principles",
+				"format":          "json (default), text, summary or index; text is the compact rendering sessions read; summary is one line of section counts and index lists the titles of open tasks and accepted knowledge (both empty when nothing is open, and both ignore max_bytes, principles and include_durable)",
 				"principles":      "include (default) or omit",
 				"include_durable": "boolean, default false; true adds accepted global/project knowledge after coordination records and notes",
 			},

@@ -346,3 +346,15 @@ func TestMCPProtocolErrors(t *testing.T) {
 	w = mcpPost(t, h, "owner-secret", `{"jsonrpc":"2.0","id":1,"method":"ping"}`)
 	assertAPIError(t, w, http.StatusForbidden)
 }
+
+func TestSchemaNamesEveryMCPTool(t *testing.T) {
+	h, _ := mcpHandler(t)
+	body := apiTestRequest(h, http.MethodGet, "/v1/schema", "", "", "Bearer "+apiTestToken, "").Body.String()
+	_, purpose, _ := strings.Cut(body, `"path":"/mcp"`)
+	purpose, _, _ = strings.Cut(purpose, "}")
+	for _, tool := range mcpTools {
+		if !strings.Contains(purpose, tool.Name) {
+			t.Errorf("the schema's /mcp entry does not name the %s tool: %s", tool.Name, purpose)
+		}
+	}
+}
