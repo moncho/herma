@@ -22,6 +22,26 @@ const TimeLayout = "20060102T150405Z"
 
 var snapshotPattern = regexp.MustCompile(`^herma-(\d{8}T\d{6}Z)\.sqlite3$`)
 
+// partialPattern matches a snapshot still being written.
+var partialPattern = regexp.MustCompile(`^\.herma-\d{8}T\d{6}Z\.sqlite3\.partial$`)
+
+// removePartials deletes snapshots a stopped process left half written. Only
+// one process writes into a backup folder, so at startup none is in progress.
+func removePartials(dir string, log io.Writer) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || !partialPattern.MatchString(entry.Name()) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, entry.Name())); err == nil {
+			fmt.Fprintf(log, "herma: backup removed unfinished snapshot %s\n", entry.Name())
+		}
+	}
+}
+
 func SnapshotName(t time.Time) string { return "herma-" + t.UTC().Format(TimeLayout) + ".sqlite3" }
 
 func SnapshotTime(name string) (time.Time, bool) {
@@ -74,6 +94,9 @@ type Config struct {
 	Keep  int
 }
 
+// Success is the last snapshot known good. At is when herma wrote or found
+// it on this machine's clock; the file name only orders snapshots and may
+// run ahead of the clock.
 type Success struct {
 	At   time.Time `json:"at"`
 	File string    `json:"file"`
@@ -125,6 +148,7 @@ func New(s *store.Store, cfg Config, log io.Writer, now func() time.Time) (*Runn
 		return nil, err
 	}
 	r := &Runner{store: s, cfg: cfg, log: log, now: now, check: min(cfg.Every, time.Minute)}
+	removePartials(cfg.Dir, log)
 	name, snapshot, skipped, err := newestValid(cfg.Dir)
 	for _, bad := range skipped {
 		fmt.Fprintf(log, "herma: backup ignored invalid snapshot %s\n", bad)
@@ -137,7 +161,12 @@ func New(s *store.Store, cfg Config, log io.Writer, now func() time.Time) (*Runn
 		if live < snapshot.Revisions {
 			return nil, fmt.Errorf("backup folder %s holds a snapshot with %d revisions but the database has %d; run herma restore %s before serving, or use a different --backup-dir", cfg.Dir, snapshot.Revisions, live, cfg.Dir)
 		}
+		// A name ahead of the clock must not push the last success into the
+		// future, where staleness could never be reached.
 		at, _ := SnapshotTime(name)
+		if current := now().UTC(); at.After(current) {
+			at = current
+		}
 		r.haveMarker, r.marker = true, snapshot.Revisions
 		r.success = &Success{At: at, File: name}
 	}
@@ -178,7 +207,8 @@ func (r *Runner) Snapshot(ctx context.Context) (bool, error) {
 	// a quick restart.
 	// It also starts after the newest existing name so a clock that moved
 	// backwards cannot produce a snapshot that sorts oldest and is pruned.
-	at := r.now().UTC().Truncate(time.Second)
+	wrote := r.now().UTC()
+	at := wrote.Truncate(time.Second)
 	if names, err := List(r.cfg.Dir); err == nil && len(names) > 0 {
 		if newest, ok := SnapshotTime(names[0]); ok && !newest.Add(time.Second).Before(at) {
 			at = newest.Add(time.Second)
@@ -201,7 +231,7 @@ func (r *Runner) Snapshot(ctx context.Context) (bool, error) {
 	}
 	r.stateMu.Lock()
 	r.haveMarker, r.marker = true, info.Revisions
-	r.success = &Success{At: at, File: name}
+	r.success = &Success{At: wrote, File: name}
 	r.failure = nil
 	r.stateMu.Unlock()
 	fmt.Fprintf(r.log, "herma: backup written %s (%d bytes, %d revisions)\n", name, size, info.Revisions)
@@ -212,14 +242,21 @@ func (r *Runner) Snapshot(ctx context.Context) (bool, error) {
 }
 
 func (r *Runner) write(ctx context.Context, partial, final string) (store.SnapshotInfo, int64, error) {
+	// SQLite would create the file with the umask's permissions. The folder is
+	// synced off the machine, so the copy is private from its first byte;
+	// VACUUM INTO accepts an existing empty file.
+	empty, err := os.OpenFile(partial, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return store.SnapshotInfo{}, 0, err
+	}
+	if err := empty.Close(); err != nil {
+		return store.SnapshotInfo{}, 0, err
+	}
 	if err := r.store.Snapshot(ctx, partial); err != nil {
 		return store.SnapshotInfo{}, 0, err
 	}
 	info, err := store.CheckSnapshot(partial)
 	if err != nil {
-		return store.SnapshotInfo{}, 0, err
-	}
-	if err := os.Chmod(partial, 0600); err != nil {
 		return store.SnapshotInfo{}, 0, err
 	}
 	f, err := os.Open(partial)
@@ -283,11 +320,30 @@ func (r *Runner) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if now := r.now().UTC(); now.Sub(last) >= r.cfg.Every {
+			now := r.now().UTC()
+			if now.Before(last) {
+				// The clock was set back. Measuring from the old reading would
+				// postpone the next snapshot, and hide staleness, by that step.
+				last = now
+				r.clampTo(now)
+			}
+			if now.Sub(last) >= r.cfg.Every {
 				last = now
 				_, _ = r.Snapshot(ctx)
 			}
 		}
+	}
+}
+
+// clampTo moves recorded times that lie after now back to now.
+func (r *Runner) clampTo(now time.Time) {
+	r.stateMu.Lock()
+	defer r.stateMu.Unlock()
+	if r.success != nil && r.success.At.After(now) {
+		r.success.At = now
+	}
+	if r.confirmed.After(now) {
+		r.confirmed = now
 	}
 }
 

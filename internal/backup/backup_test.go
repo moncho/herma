@@ -359,3 +359,111 @@ func TestIdleStoreIsNotStale(t *testing.T) {
 		t.Fatalf("idle status: %+v", status)
 	}
 }
+
+func TestSnapshotNamedAheadOfTheClockDoesNotHideStaleness(t *testing.T) {
+	s := openStore(t)
+	dir := t.TempDir()
+	// A file left by a clock that once ran ahead, or by anything else.
+	if err := os.WriteFile(filepath.Join(dir, "herma-20991231T000000Z.sqlite3"), []byte("not a database"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	c := &clock{now: start}
+	r, _ := newRunner(t, s, dir, 14, c)
+	write(t, s, "first")
+	if written, err := r.Snapshot(context.Background()); err != nil || !written {
+		t.Fatalf("snapshot: %t %v", written, err)
+	}
+	status := r.Status()
+	if status.LastSuccess.File != "herma-20991231T000001Z.sqlite3" || !status.LastSuccess.At.Equal(start) {
+		t.Fatalf("the name orders snapshots, the time is when it was written: %+v", status.LastSuccess)
+	}
+	c.Advance(2*time.Hour + time.Second)
+	if !r.Status().Stale {
+		t.Fatalf("not stale after twice the interval: %+v", r.Status())
+	}
+	// A restart reads the name back; it must not become the success time.
+	resumed, _ := newRunner(t, s, dir, 14, c)
+	if at := resumed.Status().LastSuccess.At; at.After(c.Now()) {
+		t.Fatalf("resumed success time %s is in the future", at)
+	}
+	c.Advance(2*time.Hour + time.Second)
+	if !resumed.Status().Stale {
+		t.Fatalf("resumed runner not stale after twice the interval: %+v", resumed.Status())
+	}
+}
+
+func TestRunKeepsItsIntervalWhenTheClockIsSetBack(t *testing.T) {
+	s := openStore(t)
+	dir := t.TempDir()
+	c := &clock{now: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)}
+	r, _ := newRunner(t, s, dir, 14, c)
+	r.check = 5 * time.Millisecond
+	write(t, s, "before")
+	if _, err := r.Snapshot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go r.Run(ctx)
+	time.Sleep(50 * time.Millisecond) // let Run take its first clock reading
+	c.Advance(-3 * time.Hour)
+	deadline := time.Now().Add(3 * time.Second)
+	for r.Status().LastSuccess.At.After(c.Now()) {
+		if time.Now().After(deadline) {
+			t.Fatal("the last success stayed ahead of the clock")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	write(t, s, "after")
+	c.Advance(time.Hour)
+	for {
+		if names, _ := List(dir); len(names) == 2 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Run waited for the old clock reading instead of one interval")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestSnapshotIsPrivateBeforeSQLiteWritesIt(t *testing.T) {
+	s := openStore(t)
+	dir := t.TempDir()
+	r, _ := newRunner(t, s, dir, 14, &clock{now: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)})
+	write(t, s, "private")
+	// A cancelled context stops the write after the file is created and
+	// before SQLite fills it.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	partial := filepath.Join(dir, ".partial-under-test")
+	if _, _, err := r.write(ctx, partial, filepath.Join(dir, "final")); err == nil {
+		t.Fatal("expected the cancelled write to fail")
+	}
+	if info, err := os.Stat(partial); err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("partial: %v %v", info, err)
+	}
+}
+
+func TestNewRemovesUnfinishedSnapshots(t *testing.T) {
+	s := openStore(t)
+	dir := t.TempDir()
+	leftover := filepath.Join(dir, ".herma-20260930T120000Z.sqlite3.partial")
+	other := filepath.Join(dir, ".herma-notes.partial")
+	for _, path := range []string{leftover, other} {
+		if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, log := newRunner(t, s, dir, 14, &clock{now: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)})
+	if _, err := os.Stat(leftover); !os.IsNotExist(err) {
+		t.Fatalf("unfinished snapshot kept: %v", err)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Fatalf("another file was removed: %v", err)
+	}
+	if !strings.Contains(log.String(), "removed unfinished snapshot") {
+		t.Fatalf("log: %s", log)
+	}
+}
