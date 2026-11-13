@@ -5,7 +5,7 @@ export type Backup = { enabled: false } | { enabled: true; ageSeconds?: number; 
 export type HermaStatus =
   | { kind: 'unbound' }
   | { kind: 'failed'; reason: string }
-  | { kind: 'ok'; bound: boolean; role: string; review: number; backup: Backup }
+  | { kind: 'ok'; bound: boolean; role: string; review: number; backup: Backup; client?: string; server?: string }
 
 type Run = { exitCode: number; stdout: string; stderr: string }
 
@@ -35,12 +35,16 @@ export function parseStatus(r: Run): HermaStatus {
   const backup: Backup = b.enabled === true
     ? { enabled: true, ageSeconds: typeof b.age_seconds === 'number' ? b.age_seconds : undefined, stale: b.stale === true }
     : { enabled: false }
+  // Older herma reports no versions; an older server reports only the client's.
+  const v = (doc.version ?? {}) as { client?: unknown; server?: unknown }
   return {
     kind: 'ok',
     bound: doc.bound === true,
     role: typeof doc.role === 'string' ? doc.role : '',
     review: typeof review?.total === 'number' ? review.total : 0,
     backup,
+    client: typeof v.client === 'string' ? v.client : undefined,
+    server: typeof v.server === 'string' ? v.server : undefined,
   }
 }
 
@@ -64,6 +68,8 @@ export function statusText(s: HermaStatus): string | undefined {
   if (!b.enabled) parts.push('backup off')
   else if (b.ageSeconds === undefined) parts.push('backup none')
   else parts.push(`backup ${age(b.ageSeconds)}${b.stale ? ' ⚠' : ''}`)
+  // Client and server are upgraded separately; say so while they differ.
+  if (s.client && s.server && s.client !== s.server) parts.push(`server ${firstLine(s.server, 24)} ≠ ${firstLine(s.client, 24)}`)
   return parts.join(' · ')
 }
 

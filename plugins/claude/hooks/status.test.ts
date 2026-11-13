@@ -18,6 +18,9 @@ describe('statusText', () => {
     ['off', parseStatus(run(okJSON(0, { enabled: false }))), 'herma ✓ · backup off'],
     ['none yet', parseStatus(run(okJSON(0, { enabled: true, stale: false }))), 'herma ✓ · backup none'],
     ['unbound', parseStatus(run('{"bound": false}')), undefined],
+    ['same versions', parseStatus(run(JSON.stringify({ bound: true, role: 'agent', review: { total: 0 }, backup: { enabled: false }, version: { client: 'v0.3.0', server: 'v0.3.0' } }))), 'herma ✓ · backup off'],
+    ['server behind', parseStatus(run(JSON.stringify({ bound: true, role: 'agent', review: { total: 0 }, backup: { enabled: false }, version: { client: 'v0.3.0', server: 'v0.2.0' } }))), 'herma ✓ · backup off · server v0.2.0 ≠ v0.3.0'],
+    ['server too old to say', parseStatus(run(JSON.stringify({ bound: true, role: 'agent', review: { total: 0 }, backup: { enabled: false }, version: { client: 'v0.3.0' } }))), 'herma ✓ · backup off'],
     ['failed', parseStatus(run('', 1, 'herma: knowledge base server is not running or reachable at http://127.0.0.1:8765; start herma serve\n')), 'herma ✗ knowledge base server is not running or reachable at http://'],
     ['reviewer', parseStatus(run(JSON.stringify({ bound: true, role: 'reviewer', review: { total: 0 }, backup: { enabled: false } }))), 'herma ✗ reviewer identity refused'],
   ]

@@ -21,6 +21,7 @@ import (
 
 	"github.com/moncho/herma/internal/backup"
 	"github.com/moncho/herma/internal/store"
+	"github.com/moncho/herma/internal/version"
 )
 
 const maxBody = 128 << 10
@@ -168,7 +169,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case "/v1/whoami":
 		if method(w, r, http.MethodGet) {
-			writeJSON(w, http.StatusOK, map[string]string{"identity": id.actor, "role": string(id.role), "listener": listenerName(r)})
+			writeJSON(w, http.StatusOK, map[string]string{"identity": id.actor, "role": string(id.role), "listener": listenerName(r), "version": version.Version})
 		}
 	case "/v1/backup":
 		if method(w, r, http.MethodGet) {

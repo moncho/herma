@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/moncho/herma/internal/project"
+	"github.com/moncho/herma/internal/version"
 )
 
 type statusOutput struct {
@@ -150,5 +151,22 @@ func TestStatusFailsWhenServerIsDown(t *testing.T) {
 	}
 	if len(data) != 0 {
 		t.Fatalf("stdout should be empty, got %q", data)
+	}
+}
+
+func TestStatusReportsClientAndServerVersions(t *testing.T) {
+	startServe(t)
+	data, err := runCLI(t, "status")
+	if err != nil {
+		t.Fatalf("%s %v", data, err)
+	}
+	var status struct {
+		Version map[string]string `json:"version"`
+	}
+	if err := json.Unmarshal(data, &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.Version["client"] != version.Version || status.Version["server"] != version.Version {
+		t.Fatalf("version: %v", status.Version)
 	}
 }

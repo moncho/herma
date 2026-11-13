@@ -13,6 +13,7 @@ import (
 	"github.com/moncho/herma/internal/client"
 	"github.com/moncho/herma/internal/project"
 	"github.com/moncho/herma/internal/store"
+	"github.com/moncho/herma/internal/version"
 )
 
 type statusReview struct {
@@ -31,7 +32,8 @@ type statusBackup struct {
 }
 
 // statusCommand answers in one call what a status line shows: the binding,
-// the identity, what awaits review and how old the last backup is. Outside a
+// the identity, the client and server versions, what awaits review and how
+// old the last backup is. Outside a
 // bound checkout it reports the same fields with "bound": false and no
 // project_id.
 func statusCommand(ctx context.Context, cfg config, args []string, stdout, stderr io.Writer) error {
@@ -54,6 +56,7 @@ func statusCommand(ctx context.Context, cfg config, args []string, stdout, stder
 	var who struct {
 		Identity string `json:"identity"`
 		Role     string `json:"role"`
+		Version  string `json:"version"` // older servers do not report it
 	}
 	if err := getJSON(ctx, c, "/v1/whoami", nil, &who); err != nil {
 		return err
@@ -98,6 +101,13 @@ func statusCommand(ctx context.Context, cfg config, args []string, stdout, stder
 		"bound": bound, "server": "ok",
 		"identity": who.Identity, "role": who.Role, "review": review, "backup": b,
 	}
+	// Client and server are upgraded separately; showing both tells a
+	// half-finished upgrade from a finished one.
+	versions := map[string]string{"client": version.Version}
+	if who.Version != "" {
+		versions["server"] = who.Version
+	}
+	result["version"] = versions
 	if bound {
 		result["project_id"] = binding.ProjectID
 	}
