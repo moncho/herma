@@ -19,6 +19,10 @@ type RecallOptions struct {
 
 const maxRecallWords = 32
 
+// maxTerms caps a record's search terms: enough for the other ways to ask for
+// it, too few to match everything.
+const maxTerms = 16
+
 // recallQuery turns plain text into quoted FTS5 term lists joined with OR, so
 // any word can match and syntax in the query is never interpreted. whole holds
 // the whole-word terms; stems holds the four-rune stems of longer words, which
@@ -157,7 +161,7 @@ WHERE record_search MATCH ? AND ` + condition + ` AND r.archived = 0`
 			args = append(args, id)
 		}
 	}
-	query += ` ORDER BY bm25(record_search, 5.0, 1.0, 0.5), CASE WHEN r.project_id = ? THEN 0 ELSE 1 END, r.priority DESC, r.updated_ns DESC, r.id LIMIT ?`
+	query += ` ORDER BY bm25(record_search, 5.0, 1.0, 0.5, 1.0), CASE WHEN r.project_id = ? THEN 0 ELSE 1 END, r.priority DESC, r.updated_ns DESC, r.id LIMIT ?`
 	args = append(args, o.ProjectID, limit)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

@@ -273,7 +273,7 @@ global unless you pass `--project`.
 Global flags (`--url`, `--credentials`, `--identity`, `--socket`) go **before**
 the command. Record/filter flags go after it; for updates, flags go after the
 record ID. Use `--body-file notes.md` for multiline text, and comma-separated
-`--tags`, `--links` and `--sources`. An explicitly empty update flag clears that
+`--tags`, `--terms`, `--links` and `--sources`. An explicitly empty update flag clears that
 field. The API accepts arrays directly when a value itself contains a comma.
 
 Commands return JSON to standard output and errors to standard error with a
@@ -330,8 +330,8 @@ and a reviewer token is refused over TCP as everywhere else.
 Four tools carry the memory: `recall` (search reviewed knowledge and
 principles), `get` (one record by ID), `principles` (the accepted principles as
 markdown, global or for one project) and `propose` (a knowledge or principle
-proposal with at least one source, created as `proposed` by the calling
-identity). Three carry coordination: `context` (one project's open tasks,
+proposal with at least one source and, to make it findable, search terms,
+created as `proposed` by the calling identity). Three carry coordination: `context` (one project's open tasks,
 recent notes and feedback as text, as `herma context` prints them without the
 principles), `create` (a task, note or record of a custom kind; knowledge and
 principles are refused, they go through `propose`) and `update` (change a
@@ -468,7 +468,24 @@ herma recall "retry backoff" --include-proposed --limit 5
 
 A record matches when it contains any of the words; longer words also match
 their stem, so `retries` finds `retry`. Title matches count more than body
-matches, and the checkout's project comes before global records. Without
+matches, and the checkout's project comes before global records.
+
+Recall matches words, not meaning, so a query phrased differently from a
+record misses it. A record's search terms close that gap: up to 16 other words
+or short phrases someone might look it up by, given with `--terms` when
+proposing and matched like its body without being part of its text:
+
+```sh
+herma create --kind principle --title 'Keep dates and ETAs out of status updates' \
+  --body-file principle.md --sources 'session:2026-10-09' \
+  --terms 'deadline,estimate,timeline,progress report,schedule'
+```
+
+Write six to ten: synonyms, the situation the record applies to, the mistake
+it prevents, and leave out words already in the title. `herma review` shows
+them with the proposal. Like the rest of an accepted record, only the reviewer
+changes them: `herma update ID --version N --terms 'a,b'`.
+ Without
 `--project`, recall uses the nearest `.herma-project.json`, or searches every
 project when there is none. `--include-proposed` adds unreviewed records,
 marked by `"status": "proposed"`.
@@ -480,8 +497,8 @@ Chinese or Japanese text into words.
 
 ## Search and lists
 
-Search uses SQLite FTS5 over title, body and the textual fields of custom kinds
-(`string`, `text`, `url` and `string-list`). Query words are treated as plain text
+Search uses SQLite FTS5 over title, body, search terms and the textual fields of
+custom kinds (`string`, `text`, `url` and `string-list`). Query words are treated as plain text
 and all must match. Matching is by tokenizer terms, not arbitrary substrings:
 Chinese or Japanese text without separators can be indexed as a whole run, so
 searching for an embedded word may miss it. Language-aware segmentation is not

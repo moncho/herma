@@ -98,6 +98,13 @@ INSERT INTO record_search(rowid, title, body, fields)
 	// filter by project too, and scan every row of the kind.
 	`CREATE INDEX records_kind ON records(kind, archived);
 CREATE INDEX records_kind_name ON records(json_extract(data, '$.title')) WHERE kind = 'kind';`,
+	// 6: index a record's search terms, the other words someone might ask
+	// for it by, in a column of their own.
+	`CREATE VIRTUAL TABLE record_search_terms USING fts5(title, body, fields, terms);
+INSERT INTO record_search_terms(rowid, title, body, fields, terms)
+ SELECT rowid, title, body, fields, '' FROM record_search;
+DROP TABLE record_search;
+ALTER TABLE record_search_terms RENAME TO record_search;`,
 }
 
 // Open opens a local SQLite database. The parent directory must already exist.
@@ -182,7 +189,7 @@ func (s *Store) Create(ctx context.Context, author Author, key string, input Cre
 	r := Record{
 		Kind: input.Kind, Title: input.Title, Body: input.Body, ProjectID: input.ProjectID,
 		Status: input.Status, Priority: input.Priority, Owner: input.Owner,
-		Tags: input.Tags, Links: input.Links, Sources: input.Sources, Fields: input.Fields,
+		Tags: input.Tags, Terms: input.Terms, Links: input.Links, Sources: input.Sources, Fields: input.Fields,
 		CreatedBy: author.Name, UpdatedBy: author.Name, Version: 1,
 	}
 	if r.Status == "" {
@@ -288,6 +295,9 @@ func (s *Store) Update(ctx context.Context, id string, author Author, key string
 	}
 	if input.Tags != nil {
 		r.Tags = *input.Tags
+	}
+	if input.Terms != nil {
+		r.Terms = *input.Terms
 	}
 	if input.Links != nil {
 		r.Links = *input.Links
@@ -535,7 +545,7 @@ func saveRecord(ctx context.Context, tx *sql.Tx, r Record, fieldsText, action, a
 	err = tx.QueryRowContext(ctx, "SELECT search_rowid FROM records WHERE id = ?", r.ID).Scan(&searchRowID)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		result, err := tx.ExecContext(ctx, "INSERT INTO record_search(title, body, fields) VALUES (?, ?, ?)", r.Title, r.Body, fieldsText)
+		result, err := tx.ExecContext(ctx, "INSERT INTO record_search(title, body, fields, terms) VALUES (?, ?, ?, ?)", r.Title, r.Body, fieldsText, strings.Join(r.Terms, "\n"))
 		if err != nil {
 			return err
 		}
@@ -545,7 +555,7 @@ func saveRecord(ctx context.Context, tx *sql.Tx, r Record, fieldsText, action, a
 	case err != nil:
 		return err
 	default:
-		if _, err := tx.ExecContext(ctx, "UPDATE record_search SET title = ?, body = ?, fields = ? WHERE rowid = ?", r.Title, r.Body, fieldsText, searchRowID); err != nil {
+		if _, err := tx.ExecContext(ctx, "UPDATE record_search SET title = ?, body = ?, fields = ?, terms = ? WHERE rowid = ?", r.Title, r.Body, fieldsText, strings.Join(r.Terms, "\n"), searchRowID); err != nil {
 			return err
 		}
 	}
@@ -731,6 +741,12 @@ func normalizeRecord(r *Record, k Kind) error {
 	if r.Tags, err = normalizeStrings(r.Tags, "tags", 32, 64, true); err != nil {
 		return err
 	}
+	if r.Terms, err = normalizeStrings(r.Terms, "terms", maxTerms, 64, true); err != nil {
+		return err
+	}
+	if len(r.Terms) == 0 {
+		r.Terms = nil // omitted from the record, so records without terms keep their shape
+	}
 	if r.Links, err = normalizeStrings(r.Links, "links", 100, 100, false); err != nil {
 		return err
 	}
@@ -804,7 +820,7 @@ func validateReferences(ctx context.Context, tx *sql.Tx, r Record, oldProject st
 }
 
 func hasContentChanges(input UpdateInput) bool {
-	return input.Title != nil || input.Body != nil || input.ProjectID != nil || input.Status != nil || input.Priority != nil || input.Owner != nil || input.Tags != nil || input.Links != nil || input.Sources != nil || input.Fields != nil || input.ReviewReason != nil
+	return input.Title != nil || input.Body != nil || input.ProjectID != nil || input.Status != nil || input.Priority != nil || input.Owner != nil || input.Tags != nil || input.Terms != nil || input.Links != nil || input.Sources != nil || input.Fields != nil || input.ReviewReason != nil
 }
 
 func validateList(o *ListOptions) error {

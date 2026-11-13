@@ -82,7 +82,8 @@ Setup and server
   restore SNAPSHOT|DIR [--db PATH]                 Restore a snapshot (server stopped)
 
 Fields for create and update: --title, --body, --body-file, --project, --status,
---priority, --owner, --tags, --links, --sources, --field NAME=VALUE, --fields-file PATH.
+--priority, --owner, --tags, --terms, --links, --sources, --field NAME=VALUE,
+--fields-file PATH.
 Lists are comma-separated; updates send only the fields given.
 
 COMMAND --help lists every option (for update: update ID --help). Results are JSON on
@@ -329,10 +330,10 @@ func writeError(err error, requestID string) error {
 }
 
 type fields struct {
-	title, body, bodyFile, project, status, owner, tags, links, sources, requestID string
-	priority                                                                       int
-	fieldValues                                                                    fieldFlags
-	fieldsFile                                                                     string
+	title, body, bodyFile, project, status, owner, tags, terms, links, sources, requestID string
+	priority                                                                              int
+	fieldValues                                                                           fieldFlags
+	fieldsFile                                                                            string
 }
 
 // repeatedFlag collects every value of a repeatable string flag.
@@ -376,6 +377,7 @@ func (v *fields) register(fs *flag.FlagSet) {
 	fs.IntVar(&v.priority, "priority", 0, "record priority; see herma schema")
 	fs.StringVar(&v.owner, "owner", "", "task owner; empty clears it on update")
 	fs.StringVar(&v.tags, "tags", "", "comma-separated tags; empty clears them on update")
+	fs.StringVar(&v.terms, "terms", "", "comma-separated other words someone might search this record by; recall matches them; empty clears them on update")
 	fs.StringVar(&v.links, "links", "", "comma-separated related record IDs")
 	fs.StringVar(&v.sources, "sources", "", "comma-separated source references or URLs")
 	fs.StringVar(&v.requestID, "request-id", "", "idempotency key; defaults to a new random key")
@@ -471,7 +473,7 @@ func create(ctx context.Context, cfg config, args []string, stdout, stderr io.Wr
 			return err
 		}
 	}
-	input := store.CreateInput{Kind: *kind, Title: v.title, Body: v.body, ProjectID: v.project, Status: v.status, Priority: v.priority, Owner: v.owner, Tags: csv(v.tags), Links: csv(v.links), Sources: csv(v.sources), Fields: fieldValues}
+	input := store.CreateInput{Kind: *kind, Title: v.title, Body: v.body, ProjectID: v.project, Status: v.status, Priority: v.priority, Owner: v.owner, Tags: csv(v.tags), Terms: csv(v.terms), Links: csv(v.links), Sources: csv(v.sources), Fields: fieldValues}
 	return cfg.request(ctx, stdout, http.MethodPost, "/v1/records", nil, input, v.requestID)
 }
 
@@ -522,6 +524,10 @@ func update(ctx context.Context, cfg config, args []string, stdout, stderr io.Wr
 	if set["tags"] {
 		value := csv(v.tags)
 		input.Tags = &value
+	}
+	if set["terms"] {
+		value := csv(v.terms)
+		input.Terms = &value
 	}
 	if set["links"] {
 		value := csv(v.links)

@@ -18,6 +18,7 @@ func schemaDocument(kinds []store.Kind) map[string]any {
 			"priority":                  "integer 0–5; higher first",
 			"owner":                     "optional assignment; does not confer access or approval",
 			"tags":                      "up to 32 lowercase, deduplicated tags",
+			"terms":                     "up to 16 lowercase search terms: other words someone might look this record up by; recall and q match them, and they are not part of the record's text",
 			"links":                     "up to 100 other existing record IDs; self-links rejected; archived targets allowed",
 			"sources":                   "up to 50 evidence references or URLs; these are attribution, not authenticated writers",
 			"fields":                    "typed values for the record's kind; on PATCH a patch where null removes a field; see kinds",

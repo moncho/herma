@@ -184,7 +184,7 @@ func TestMCPToolsReadAndProposeAsTheIdentity(t *testing.T) {
 		t.Fatalf("principles: %+v", result)
 	}
 
-	result = callTool(t, h, apiTestToken, "propose", map[string]any{"kind": "knowledge", "title": "Backups run hourly", "body": "See the Makefile.", "sources": []string{"Makefile"}})
+	result = callTool(t, h, apiTestToken, "propose", map[string]any{"kind": "knowledge", "title": "Backups run hourly", "body": "See the Makefile.", "sources": []string{"Makefile"}, "terms": []string{"Snapshot Schedule", "cron"}})
 	if result.IsError {
 		t.Fatalf("propose: %+v", result)
 	}
@@ -198,6 +198,17 @@ func TestMCPToolsReadAndProposeAsTheIdentity(t *testing.T) {
 	record, err := s.Get(t.Context(), created.ID)
 	if err != nil || record.CreatedBy != "authenticated-session" || record.Kind != "knowledge" || len(record.Sources) != 1 {
 		t.Fatalf("%+v %v", record, err)
+	}
+	if strings.Join(record.Terms, "|") != "snapshot schedule|cron" {
+		t.Fatalf("terms %q", record.Terms)
+	}
+	result = callTool(t, h, apiTestToken, "recall", map[string]any{"query": "cron", "include_proposed": true})
+	if result.IsError || !strings.Contains(result.Content[0].Text, created.ID) {
+		t.Fatalf("recall by term: %+v", result)
+	}
+	result = callTool(t, h, apiTestToken, "update", map[string]any{"id": created.ID, "version": 1, "terms": []string{"timer"}})
+	if record, _ := s.Get(t.Context(), created.ID); result.IsError || strings.Join(record.Terms, "|") != "timer" {
+		t.Fatalf("update terms: %+v %q", result, record.Terms)
 	}
 	result = callTool(t, h, apiTestToken, "propose", map[string]any{"kind": "task", "title": "Not durable"})
 	if !result.IsError {

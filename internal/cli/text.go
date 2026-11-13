@@ -69,7 +69,7 @@ func recordText(w io.Writer, r store.Record, project string) error {
 	for _, list := range []struct {
 		name  string
 		items []string
-	}{{"tags", r.Tags}, {"links", r.Links}, {"sources", r.Sources}} {
+	}{{"tags", r.Tags}, {"terms", r.Terms}, {"links", r.Links}, {"sources", r.Sources}} {
 		if len(list.items) > 0 {
 			b.WriteString(list.name + ": " + strings.Join(list.items, ", ") + "\n")
 		}

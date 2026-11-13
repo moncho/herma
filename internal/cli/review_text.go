@@ -75,6 +75,9 @@ func reviewText(ctx context.Context, c *client.Client, w io.Writer, queue map[st
 func writeProposal(b *strings.Builder, r store.Record, project string) {
 	fmt.Fprintf(b, "%s · %s · by %s · %s\n%s\n", r.ID, project, r.CreatedBy, r.UpdatedAt.UTC().Format("2006-01-02"), r.Title)
 	writeBody(b, r.Body)
+	if len(r.Terms) > 0 {
+		b.WriteString("  terms: " + strings.Join(r.Terms, ", ") + "\n")
+	}
 	if len(r.Sources) > 0 {
 		b.WriteString("  sources: " + strings.Join(r.Sources, ", ") + "\n")
 	}

@@ -44,15 +44,18 @@ type Author struct {
 // Record is a versioned piece of knowledge. Authenticated identities, rather
 // than client-provided attribution, populate CreatedBy and UpdatedBy.
 type Record struct {
-	ID        string         `json:"id"`
-	Kind      string         `json:"kind"`
-	Title     string         `json:"title"`
-	Body      string         `json:"body"`
-	ProjectID string         `json:"project_id,omitempty"`
-	Status    string         `json:"status"`
-	Priority  int            `json:"priority"`
-	Owner     string         `json:"owner,omitempty"`
-	Tags      []string       `json:"tags"`
+	ID        string   `json:"id"`
+	Kind      string   `json:"kind"`
+	Title     string   `json:"title"`
+	Body      string   `json:"body"`
+	ProjectID string   `json:"project_id,omitempty"`
+	Status    string   `json:"status"`
+	Priority  int      `json:"priority"`
+	Owner     string   `json:"owner,omitempty"`
+	Tags      []string `json:"tags"`
+	// Terms are other words someone might search this record by. Recall
+	// matches them; they are not part of the record's text.
+	Terms     []string       `json:"terms,omitempty"`
 	Links     []string       `json:"links"`
 	Sources   []string       `json:"sources"`
 	Fields    map[string]any `json:"fields"`
@@ -78,6 +81,7 @@ type CreateInput struct {
 	Priority  int            `json:"priority"`
 	Owner     string         `json:"owner,omitempty"`
 	Tags      []string       `json:"tags,omitempty"`
+	Terms     []string       `json:"terms,omitempty"`
 	Links     []string       `json:"links,omitempty"`
 	Sources   []string       `json:"sources,omitempty"`
 	Fields    map[string]any `json:"fields,omitempty"`
@@ -93,6 +97,7 @@ type UpdateInput struct {
 	Priority  *int      `json:"priority,omitempty"`
 	Owner     *string   `json:"owner,omitempty"`
 	Tags      *[]string `json:"tags,omitempty"`
+	Terms     *[]string `json:"terms,omitempty"`
 	Links     *[]string `json:"links,omitempty"`
 	Sources   *[]string `json:"sources,omitempty"`
 	Archived  *bool     `json:"archived,omitempty"`
