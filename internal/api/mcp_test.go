@@ -122,7 +122,7 @@ func TestMCPInitializeNegotiatesVersionAndOffersTools(t *testing.T) {
 	}
 }
 
-func TestMCPListsTheFourTools(t *testing.T) {
+func TestMCPListsItsTools(t *testing.T) {
 	h, _ := mcpHandler(t)
 	response := rpc(t, h, apiTestToken, "tools/list", nil)
 	var result struct {
@@ -142,7 +142,7 @@ func TestMCPListsTheFourTools(t *testing.T) {
 			t.Fatalf("tool %s lacks a description or object schema", tool.Name)
 		}
 	}
-	if strings.Join(names, ",") != "recall,get,principles,propose" {
+	if strings.Join(names, ",") != "recall,get,principles,propose,context,create,update" {
 		t.Fatalf("tools %v", names)
 	}
 }
@@ -205,6 +205,73 @@ func TestMCPToolsReadAndProposeAsTheIdentity(t *testing.T) {
 	}
 }
 
+func TestMCPToolsCoordinateThroughTasksAndNotes(t *testing.T) {
+	h, s := mcpHandler(t)
+	agent := store.Author{Name: "other-session", Role: store.RoleAgent}
+	project, _, err := s.Create(t.Context(), agent, "", store.CreateInput{Kind: "project", Title: "Shared repo", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Create(t.Context(), agent, "", store.CreateInput{Kind: "task", Title: "Migrate the importer", Body: "Open: the CSV path.", ProjectID: project.ID}); err != nil {
+		t.Fatal(err)
+	}
+
+	result := callTool(t, h, apiTestToken, "context", map[string]any{"project_id": project.ID})
+	if result.IsError || !strings.Contains(result.Content[0].Text, "Migrate the importer") {
+		t.Fatalf("context: %+v", result)
+	}
+	result = callTool(t, h, apiTestToken, "context", map[string]any{"project_id": "rec_" + strings.Repeat("0", 32)})
+	if !result.IsError {
+		t.Fatalf("context of a missing project: %+v", result)
+	}
+
+	result = callTool(t, h, apiTestToken, "create", map[string]any{"kind": "task", "title": "Rewrite the exporter", "body": "Next: the schema.", "project_id": project.ID, "tags": []string{"export"}})
+	if result.IsError {
+		t.Fatalf("create: %+v", result)
+	}
+	var created struct {
+		ID      string `json:"id"`
+		Version int64  `json:"version"`
+	}
+	if err := json.Unmarshal([]byte(result.Content[0].Text), &created); err != nil || created.Version != 1 {
+		t.Fatalf("create result %q: %v", result.Content[0].Text, err)
+	}
+	record, err := s.Get(t.Context(), created.ID)
+	if err != nil || record.CreatedBy != "authenticated-session" || record.Kind != "task" || record.ProjectID != project.ID || len(record.Tags) != 1 {
+		t.Fatalf("%+v %v", record, err)
+	}
+	if result := callTool(t, h, apiTestToken, "create", map[string]any{"kind": "knowledge", "title": "Skips review"}); !result.IsError || !strings.Contains(result.Content[0].Text, "propose") {
+		t.Fatalf("create must not take knowledge: %+v", result)
+	}
+	if result := callTool(t, h, apiTestToken, "create", map[string]any{"kind": "no-such-kind", "title": "x"}); !result.IsError {
+		t.Fatalf("create of an unknown kind: %+v", result)
+	}
+
+	result = callTool(t, h, apiTestToken, "update", map[string]any{"id": created.ID, "version": 1, "status": "done", "body": "Done: the schema."})
+	if result.IsError || !strings.Contains(result.Content[0].Text, `"version":2`) {
+		t.Fatalf("update: %+v", result)
+	}
+	record, err = s.Get(t.Context(), created.ID)
+	if err != nil || record.Status != "done" || record.Body != "Done: the schema." || record.Title != "Rewrite the exporter" {
+		t.Fatalf("%+v %v", record, err)
+	}
+	result = callTool(t, h, apiTestToken, "update", map[string]any{"id": created.ID, "version": 1, "title": "Stale edit"})
+	if !result.IsError || !strings.Contains(result.Content[0].Text, "record changed") {
+		t.Fatalf("stale update: %+v", result)
+	}
+	proposal, _, err := s.Create(t.Context(), agent, "", store.CreateInput{Kind: "knowledge", Title: "Unreviewed", Body: "x", Sources: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result = callTool(t, h, apiTestToken, "update", map[string]any{"id": proposal.ID, "version": 1, "status": "accepted"})
+	if !result.IsError {
+		t.Fatalf("an agent accepted its own proposal: %+v", result)
+	}
+	if record, _ := s.Get(t.Context(), proposal.ID); record.Status != "proposed" {
+		t.Fatalf("status %q", record.Status)
+	}
+}
+
 func TestMCPReadOnlyIdentityCanReadButNotPropose(t *testing.T) {
 	h, _ := mcpHandler(t)
 	if result := callTool(t, h, mcpReaderToken, "recall", map[string]any{"query": "anything"}); result.IsError {
@@ -213,6 +280,14 @@ func TestMCPReadOnlyIdentityCanReadButNotPropose(t *testing.T) {
 	result := callTool(t, h, mcpReaderToken, "propose", map[string]any{"kind": "knowledge", "title": "Nope"})
 	if !result.IsError || !strings.Contains(result.Content[0].Text, "read-only") {
 		t.Fatalf("reader propose: %+v", result)
+	}
+	for name, args := range map[string]map[string]any{
+		"create": {"kind": "task", "title": "Nope"},
+		"update": {"id": "rec_" + strings.Repeat("0", 32), "version": 1, "title": "Nope"},
+	} {
+		if result := callTool(t, h, mcpReaderToken, name, args); !result.IsError || !strings.Contains(result.Content[0].Text, "read-only") {
+			t.Fatalf("reader %s: %+v", name, result)
+		}
 	}
 }
 

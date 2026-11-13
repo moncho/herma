@@ -324,15 +324,21 @@ The server also speaks the Model Context Protocol at `/mcp`, over the
 Streamable HTTP transport in its stateless form: each JSON-RPC request is one
 POST answered with one JSON response, with no sessions and no server-initiated
 stream. The same bearer tokens and roles apply as to the REST API, so an agent
-identity can read and propose, a read-only identity can only read, and a
-reviewer token is refused over TCP as everywhere else.
+identity can read, propose and coordinate, a read-only identity can only read,
+and a reviewer token is refused over TCP as everywhere else.
 
-It offers four tools: `recall` (search reviewed knowledge and principles),
-`get` (one record by ID), `principles` (the accepted principles as markdown,
-global or for one project) and `propose` (a knowledge or principle proposal
-with at least one source, created as `proposed` by the calling identity).
-The server's `instructions` tell the model to call `principles` at the start
-of a session and `recall` before a decision with history.
+Four tools carry the memory: `recall` (search reviewed knowledge and
+principles), `get` (one record by ID), `principles` (the accepted principles as
+markdown, global or for one project) and `propose` (a knowledge or principle
+proposal with at least one source, created as `proposed` by the calling
+identity). Three carry coordination: `context` (one project's open tasks,
+recent notes and feedback as text, as `herma context` prints them without the
+principles), `create` (a task, note or record of a custom kind; knowledge and
+principles are refused, they go through `propose`) and `update` (change a
+record by ID, passing the `version` last read; a record that changed since
+fails the call). The server's `instructions` tell the model to call
+`principles` at the start of a session, `recall` before a decision with
+history, and to keep the state of its work in tasks and notes.
 
 Any client that speaks Streamable HTTP with a bearer header can connect. For
 Claude Code, with the token of an agent identity (`herma identity add NAME

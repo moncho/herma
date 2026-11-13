@@ -23,9 +23,9 @@ agents propose new ones as they learn how you work.
   repository's sessions start with an index: the titles of open tasks and
   accepted knowledge, which agents open when relevant.
 - **Any agent over MCP.** The server speaks the Model Context Protocol at
-  `/mcp`, with `recall`, `get`, `principles` and `propose` as tools, so agents
-  without herma's hooks (and hosted agents) get the same memory and behaviour
-  with a URL and a token.
+  `/mcp`, with tools to recall, read principles, propose, and coordinate
+  through tasks and notes, so agents without herma's hooks (and hosted agents)
+  get the same memory and behaviour with a URL and a token.
 - **Works across machines.** Agents on other machines connect through a
   tunnel with their own tokens. Your reviewer token works only on a local socket,
   so a copied token can't approve anything.
