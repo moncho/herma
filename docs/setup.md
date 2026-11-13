@@ -20,6 +20,32 @@ release archive from GitHub: unpack it and put `herma` on your PATH. `herma
 version` shows which build is installed. The binary
 carries the Claude Code plugin, so it needs no checkout beside it.
 
+### Upgrading
+
+```sh
+herma upgrade --check   # the installed build and the newest release
+herma upgrade           # install the newest release over this binary
+```
+
+`herma upgrade` downloads the release archive for this machine from GitHub,
+checks it against the release's `SHA256SUMS`, runs the new binary once to see
+that it reports the release it claims to be, and then replaces the installed
+binary in one rename. A failure at any step leaves the installed binary as it
+was. It then rewrites the Claude Code plugin in the data folder when one is
+installed there. `--version v0.2.0` installs that release instead of the newest.
+It needs no Go toolchain, checkout, server or credentials, but it must be able
+to write the folder holding the binary. The checksum catches a damaged download;
+it comes from the same release as the archive, so it does not prove who built it.
+
+Run it on every machine: clients first, then the server. The hook and the
+plugin name the binary by path, so they need no reinstalling. On the server
+machine, restart `herma serve` afterwards (with the launch agent:
+`launchctl kickstart -k gui/$(id -u)/local.herma`), since the running process
+keeps the old build until then. `herma status` reports both sides under
+`version`, and the Claude Code status line shows `server vX ≠ vY` while they
+differ, so a half-finished upgrade is visible. herma never upgrades itself
+unasked.
+
 herma keeps its data in one folder, `~/.config/herma` unless `HERMA_DIR` names
 another. Initialization creates the folder (`0700`) and `credentials.json` in it
 with two identities, `owner` (the reviewer) and `local-agent` (an agent), without
@@ -295,14 +321,16 @@ herma status
   "project_id": "PROJECT_ID",
   "review": {"knowledge": 1, "principles": 1, "kinds": 0, "pending_kind_changes": 0, "total": 2},
   "role": "agent",
-  "server": "ok"
+  "server": "ok",
+  "version": {"client": "v0.3.0", "server": "v0.3.0"}
 }
 ```
 
 Outside a bound checkout it reports the same fields with `"bound": false` and no
 `project_id`. With backups disabled,
 `backup` is `{"enabled": false}`; before the first successful backup,
-`age_seconds` and `last_success_at` are absent.
+`age_seconds` and `last_success_at` are absent. `version.server` is absent when
+the server is too old to report it.
 
 Next: [using herma](usage.md) for records, roles and the CLI, and
 [operating herma](operations.md) for remote access, security and backups.

@@ -50,7 +50,7 @@ Session memory
   context [--project ID]                           Compact context for a session
   recall "words" [--project ID]                    Search accepted knowledge and principles
   principles [--project ID]                        Accepted principles as markdown
-  status                                           Binding, identity, queue and backup age
+  status                                           Binding, identity, versions, queue and backup age
 
 Review (reviewer identity, local socket only)
   review [--format text|json]                      Show what is waiting for review
@@ -72,6 +72,7 @@ Setup and server
   identity revoke NAME                             Remove an identity
   whoami                                           Show the identity and role in use
   version                                          Show the herma version
+  upgrade [--check] [--version vX.Y.Z]             Install a release build over this binary
   project bind --project ID [--dir PATH]           Bind a checkout to a project
   hook install --client claude|codex|both          Install the user-level session hook
   hook session-start [--client claude|codex]       Run as the session hook
@@ -186,6 +187,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		}
 		_, err := io.WriteString(stdout, "herma "+version.Version+"\n")
 		return err
+	case "upgrade":
+		return upgrade(ctx, cfg, rest, stdout, stderr)
 	case "whoami":
 		if err := noOptions(command, rest, stderr); err != nil {
 			return err

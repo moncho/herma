@@ -51,7 +51,8 @@ herma --url https://herma.example.ts.net --identity laptop hook install --client
 herma --url https://herma.example.ts.net --identity laptop project bind --project PROJECT_ID
 ```
 
-The hook and the plugin record the installed binary's absolute path. To end a
+The hook and the plugin record the installed binary's absolute path, and
+`herma upgrade` replaces the binary at that path with the newest release. To end a
 machine's access, run `herma identity revoke laptop` on the server. Sessions
 that cannot keep a file, such as cloud sessions, use `HERMA_URL` and
 `HERMA_TOKEN` instead; they get session context but not the plugin. `hook install` only handles
