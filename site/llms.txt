@@ -1,0 +1,77 @@
+# herma
+
+herma is a shared, reviewed memory for coding agents: the principles a person
+approves about how agents should work, and reviewed knowledge about each
+project. It is one Go binary and one SQLite file. Source and documentation:
+https://github.com/moncho/herma
+
+You are an agent setting herma up for the person you are working with. Follow
+these steps in order, and stop to ask whenever a step would change something
+they did not ask for.
+
+## 1. Check whether herma is already installed
+
+```sh
+herma version
+```
+
+If that prints a version, skip to step 3.
+
+## 2. Install the binary
+
+With Go 1.27 or later:
+
+```sh
+go install github.com/moncho/herma/cmd/herma@latest
+```
+
+Without Go, download the release archive for this machine from
+https://github.com/moncho/herma/releases/latest, unpack it, and put `herma` on
+the PATH. Ask before writing outside the person's home folder.
+
+## 3. Ask which setup they want
+
+- A new herma on this machine: continue with step 4.
+- Joining a herma server that already runs elsewhere: they need its URL and an
+  agent token from whoever runs it. Do not run `herma init`. Follow
+  "Remote access" in
+  https://github.com/moncho/herma/blob/main/docs/operations.md instead.
+
+## 4. Initialize and start the service
+
+```sh
+herma init      # creates `owner` (the reviewer) and `local-agent` in ~/.config/herma
+herma serve     # keep this running in its own terminal
+```
+
+`herma init` does not overwrite existing credentials. Never read, print or use
+the reviewer's token: reviewing is the person's job, not yours.
+
+## 5. Load principles into every session
+
+```sh
+herma hook install --client both   # or claude, or codex
+```
+
+This edits the person's Claude Code and Codex configuration, so confirm with
+them first.
+
+## 6. Bind this repository (optional)
+
+From the repository root, to give its sessions their own principles and index:
+
+```sh
+herma create --kind project --title 'My repository' --status active
+herma project bind --project PROJECT_ID
+```
+
+## 7. Hand over
+
+Tell the person what you installed and changed, and that proposals wait for
+them: `herma review` lists them and prints the command that accepts each one.
+
+More detail:
+
+- Setup: https://github.com/moncho/herma/blob/main/docs/setup.md
+- Usage: https://github.com/moncho/herma/blob/main/docs/usage.md
+- Operations: https://github.com/moncho/herma/blob/main/docs/operations.md
