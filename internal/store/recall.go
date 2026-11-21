@@ -100,20 +100,9 @@ func (s *Store) Recall(ctx context.Context, o RecallOptions) ([]Recalled, error)
 	if err != nil {
 		return nil, err
 	}
-	kinds, err := kindsFrom(ctx, s.db)
+	reviewed, open, err := s.recallKinds(ctx)
 	if err != nil {
 		return nil, err
-	}
-	var reviewed, open []string
-	for _, k := range kinds {
-		if !k.Definition.Policy.Recall || k.Status == "proposed" || k.Status == "rejected" {
-			continue
-		}
-		if k.review() {
-			reviewed = append(reviewed, k.Name)
-		} else {
-			open = append(open, k.Name)
-		}
 	}
 	statuses := "'accepted'"
 	if o.IncludeProposed {
@@ -132,6 +121,26 @@ func (s *Store) Recall(ctx context.Context, o RecallOptions) ([]Recalled, error)
 		records = append(records, found...)
 	}
 	return records, nil
+}
+
+// recallKinds names the kinds recall searches: reviewed kinds, whose records
+// count once accepted, and open kinds, whose records need no review.
+func (s *Store) recallKinds(ctx context.Context) (reviewed, open []string, err error) {
+	kinds, err := kindsFrom(ctx, s.db)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, k := range kinds {
+		if !k.Definition.Policy.Recall || k.Status == "proposed" || k.Status == "rejected" {
+			continue
+		}
+		if k.review() {
+			reviewed = append(reviewed, k.Name)
+		} else {
+			open = append(open, k.Name)
+		}
+	}
+	return reviewed, open, nil
 }
 
 // recallPass runs one ranked query, skipping ids already returned by an

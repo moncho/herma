@@ -43,8 +43,9 @@ func encodeRecall(p recallPacket) ([]byte, error) {
 }
 
 // packRecall adds ranked results until the next one does not fit, so the
-// results are always a rank prefix and omitted counts the ranked tail.
-func packRecall(query, projectID string, includeProposed bool, records []store.Recalled, budget int) ([]byte, error) {
+// results are always a rank prefix and omitted counts the ranked tail. It
+// also returns how many records the response includes.
+func packRecall(query, projectID string, includeProposed bool, records []store.Recalled, budget int) ([]byte, int, error) {
 	recordBudget := min(2048, budget/4)
 	p := recallPacket{
 		Scope: recallScope, Query: query, ProjectID: projectID, IncludeProposed: includeProposed,
@@ -52,10 +53,10 @@ func packRecall(query, projectID string, includeProposed bool, records []store.R
 	}
 	data, err := encodeRecall(p)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if len(data) > budget {
-		return nil, &store.ValidationError{Message: "the query and project_id do not fit in max_bytes; shorten the query or raise max_bytes"}
+		return nil, 0, &store.ValidationError{Message: "the query and project_id do not fit in max_bytes; shorten the query or raise max_bytes"}
 	}
 	clipped := false
 	for i, record := range records {
@@ -73,7 +74,7 @@ func packRecall(query, projectID string, includeProposed bool, records []store.R
 		p.Truncated = nextClipped || p.Omitted > 0
 		next, err := encodeRecall(p)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if len(next) > budget {
 			p.Results = p.Results[:len(p.Results)-1]
@@ -83,10 +84,10 @@ func packRecall(query, projectID string, includeProposed bool, records []store.R
 		}
 		clipped, data = nextClipped, next
 	}
-	return data, nil
+	return data, len(p.Results), nil
 }
 
-func (h *Handler) recall(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) recall(w http.ResponseWriter, r *http.Request, author store.Author) {
 	q := r.URL.Query()
 	if err := validateQuery(q, "q", "project_id", "include_proposed", "limit", "max_bytes"); err != nil {
 		badRequest(w, err)
@@ -117,11 +118,12 @@ func (h *Handler) recall(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
-	data, err := packRecall(query, q.Get("project_id"), includeProposed, records, budget)
+	data, included, err := packRecall(query, q.Get("project_id"), includeProposed, records, budget)
 	if err != nil {
 		storeError(w, err)
 		return
 	}
+	h.countRecalled(r.Context(), author, records[:included])
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)

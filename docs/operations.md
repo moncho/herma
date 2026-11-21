@@ -111,7 +111,8 @@ herma export > knowledge-export.json.tmp &&
 ```
 
 Export includes all records and their revision history, including archived data.
-It excludes credentials and idempotency receipts. Treat the export as private.
+It excludes credentials, idempotency receipts and usage counts; a database
+backup keeps the counts. Treat the export as private.
 JSON export is for inspection and portability; there is no JSON import command
 yet. The command above replaces the saved export only after a successful
 download. The CLI buffers and validates the complete response before writing

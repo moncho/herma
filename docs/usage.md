@@ -500,6 +500,35 @@ bodies are cut and marked with `body_truncated`; `omitted` counts matches that
 did not fit. Use `herma get ID` for the complete record. Search does not segment
 Chinese or Japanese text into words.
 
+## Usage
+
+`herma usage` shows how often agents were given each record recall can return,
+least used first, so you can see which accepted records are used and which
+never come up:
+
+```text
+RECALLED  FETCHED  LAST USED   ACCEPTED    ID                                    KIND       TITLE
+       0        0  never       2026-10-15  rec_8634111fdd75d3d94817dec81c9533de  knowledge  Snapshots are pruned by count
+       2        1  2026-11-20  2026-10-09  rec_86436fbf4fdc3956b931d8447da6fbb4  knowledge  SQLite runs in WAL mode
+```
+
+`RECALLED` counts recall responses that included the record; a match left out
+because the response was full is not counted. `FETCHED` counts reads of the
+record by ID (`herma get`, the MCP `get` tool). Reads by the reviewer are not
+counted, since the reviewer reads every record while judging it. Counting never
+changes a record: its version, history and `updated_at` stay as they were.
+
+Session start is not counted either. Principles reach every session through the
+instruction files whether or not they apply, so a principle's counts say only
+how often it was searched for or opened, not how often it was followed. The
+counts are most telling for knowledge, which agents see only when they ask.
+
+Counting starts when the server is upgraded to a version with this command, so
+compare a record's counts with its `ACCEPTED` day before judging it unused.
+Without `--project`, usage lists the bound project's records and global ones, or
+every project when the checkout has no binding. `--limit` (default 100, at most
+200) caps the list and `--format json` prints the API response.
+
 ## Search and lists
 
 Search uses SQLite FTS5 over title, body, search terms and the textual fields of

@@ -50,6 +50,7 @@ Session memory
   context [--project ID]                           Compact context for a session
   recall "words" [--project ID]                    Search accepted knowledge and principles
   principles [--project ID]                        Accepted principles as markdown
+  usage [--project ID] [--format text|json]        How often agents recalled or fetched accepted records
   status                                           Binding, identity, versions, queue and backup age
 
 Review (reviewer identity, local socket only)
@@ -87,7 +88,7 @@ Fields for create and update: --title, --body, --body-file, --project, --status,
 Lists are comma-separated; updates send only the fields given.
 
 COMMAND --help lists every option (for update: update ID --help). Results are JSON on
-stdout; context and review print text, and list and get do with --format text. Errors go to stderr.
+stdout; context, review and usage print text, and list and get do with --format text. Errors go to stderr.
 Writes accept --request-id KEY for safe retries.
 `
 
@@ -233,6 +234,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return recallCommand(ctx, cfg, rest, stdout, stderr)
 	case "principles":
 		return principlesCommand(ctx, cfg, rest, stdout, stderr)
+	case "usage":
+		return usageCommand(ctx, cfg, rest, stdout, stderr)
 	case "schema", "export":
 		if err := noOptions(command, rest, stderr); err != nil {
 			return err

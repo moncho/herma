@@ -105,6 +105,14 @@ INSERT INTO record_search_terms(rowid, title, body, fields, terms)
  SELECT rowid, title, body, fields, '' FROM record_search;
 DROP TABLE record_search;
 ALTER TABLE record_search_terms RENAME TO record_search;`,
+	// 7: how often agents were given each record. Kept outside records so a
+	// read never changes a record's version, revisions or search row.
+	`CREATE TABLE usage (
+ record_id TEXT PRIMARY KEY REFERENCES records(id),
+ recalled INTEGER NOT NULL DEFAULT 0,
+ fetched INTEGER NOT NULL DEFAULT 0,
+ last_used_ns INTEGER NOT NULL
+);`,
 }
 
 // Open opens a local SQLite database. The parent directory must already exist.

@@ -82,6 +82,7 @@ func TestSearchKeepsItsColumnsWhenTermsAreAdded(t *testing.T) {
 INSERT INTO old_search(rowid, title, body, fields) SELECT rowid, title, body, fields FROM record_search;
 DROP TABLE record_search;
 ALTER TABLE old_search RENAME TO record_search;
+DROP TABLE usage;
 PRAGMA user_version = 5;`); err != nil {
 		t.Fatal(err)
 	}

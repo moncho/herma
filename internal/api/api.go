@@ -222,7 +222,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case "/v1/recall":
 		if method(w, r, http.MethodGet) {
-			h.recall(w, r)
+			h.recall(w, r, author)
+		}
+	case "/v1/usage":
+		if method(w, r, http.MethodGet) {
+			h.usage(w, r)
 		}
 	case "/v1/export":
 		if method(w, r, http.MethodGet) {
@@ -264,6 +268,7 @@ func (h *Handler) record(w http.ResponseWriter, r *http.Request, id string, auth
 			storeError(w, err)
 			return
 		}
+		h.countFetched(r.Context(), author, id)
 		writeJSON(w, http.StatusOK, record)
 	case http.MethodPatch:
 		var input store.UpdateInput

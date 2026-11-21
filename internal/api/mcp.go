@@ -321,10 +321,11 @@ func (h *Handler) callTool(ctx context.Context, author store.Author, name string
 		if err != nil {
 			return "", toolResult(err)
 		}
-		data, err := packRecall(args.Query, args.ProjectID, args.IncludeProposed, records, 2*defaultRecallBytes)
+		data, included, err := packRecall(args.Query, args.ProjectID, args.IncludeProposed, records, 2*defaultRecallBytes)
 		if err != nil {
 			return "", toolResult(err)
 		}
+		h.countRecalled(ctx, author, records[:included])
 		return string(data), nil
 	case "get":
 		var args struct {
@@ -340,6 +341,7 @@ func (h *Handler) callTool(ctx context.Context, author store.Author, name string
 		if err != nil {
 			return "", toolResult(err)
 		}
+		h.countFetched(ctx, author, args.ID)
 		data, err := json.Marshal(record)
 		if err != nil {
 			return "", err
