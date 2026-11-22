@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -220,6 +221,7 @@ func (h *Handler) mcp(w http.ResponseWriter, r *http.Request, author store.Autho
 	if err != nil {
 		var rpcErr *rpcError
 		if !errors.As(err, &rpcErr) {
+			h.logFailure(r.Context(), "internal error", err)
 			rpcErr = &rpcError{rpcInternalError, "internal error"}
 		}
 		writeRPC(w, message.ID, nil, rpcErr)
@@ -277,7 +279,8 @@ func (h *Handler) rpcCall(ctx context.Context, author store.Author, method strin
 			return map[string]any{"content": []map[string]string{{"type": "text", "text": failure.message}}, "isError": true}, nil
 		}
 		if err != nil {
-			return nil, err
+			// Named for the error log; an rpcError inside is still found.
+			return nil, fmt.Errorf("tool %s: %w", p.Name, err)
 		}
 		return map[string]any{"content": []map[string]string{{"type": "text", "text": text}}}, nil
 	default:

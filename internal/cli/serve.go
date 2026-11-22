@@ -156,6 +156,8 @@ func serve(ctx context.Context, cfg config, args []string, stderr io.Writer) err
 	}
 	defer db.Close()
 	handler := api.NewHandler(db, apiIdentities(identities))
+	// Callers get a generic message for an internal error; its cause goes here.
+	handler.SetErrorLog(stderr)
 	var backups *backup.Runner
 	if *backupDir != "" {
 		// Reading the folder can block without an error, as when macOS keeps a

@@ -115,12 +115,12 @@ func (h *Handler) recall(w http.ResponseWriter, r *http.Request, author store.Au
 	}
 	records, err := h.store.Recall(r.Context(), store.RecallOptions{Query: query, ProjectID: q.Get("project_id"), IncludeProposed: includeProposed, Limit: limit})
 	if err != nil {
-		storeError(w, err)
+		h.storeError(w, r, err)
 		return
 	}
 	data, included, err := packRecall(query, q.Get("project_id"), includeProposed, records, budget)
 	if err != nil {
-		storeError(w, err)
+		h.storeError(w, r, err)
 		return
 	}
 	h.countRecalled(r.Context(), author, records[:included])

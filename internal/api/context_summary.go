@@ -12,7 +12,7 @@ import (
 func (h *Handler) contextSummary(w http.ResponseWriter, r *http.Request, projectID string) {
 	snapshot, err := h.projectSnapshot(r.Context(), projectID, false)
 	if err != nil {
-		storeError(w, err)
+		h.storeError(w, r, err)
 		return
 	}
 	data := []byte(renderSummary(snapshot.Sections))

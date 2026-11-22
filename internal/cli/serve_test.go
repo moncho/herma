@@ -58,6 +58,12 @@ func freeAddress(t *testing.T) string {
 // that also runs at cleanup. HERMA_CREDENTIALS and HERMA_URL point at the server.
 func startServeWith(t *testing.T, serveArgs []string, extra ...identitySpec) (string, string, func()) {
 	t.Helper()
+	return startServeTo(t, io.Discard, serveArgs, extra...)
+}
+
+// startServeTo is startServeWith with the server's stderr sent to stderr.
+func startServeTo(t *testing.T, stderr io.Writer, serveArgs []string, extra ...identitySpec) (string, string, func()) {
+	t.Helper()
 	cleanEnv(t)
 	dir := shortDir(t)
 	credentials := filepath.Join(dir, "credentials.json")
@@ -74,7 +80,7 @@ func startServeWith(t *testing.T, serveArgs []string, extra ...identitySpec) (st
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	args := append([]string{"--credentials", credentials, "serve", "--db", filepath.Join(dir, "herma.sqlite3"), "--listen", address}, serveArgs...)
-	go func() { done <- Run(ctx, args, io.Discard, io.Discard) }()
+	go func() { done <- Run(ctx, args, io.Discard, stderr) }()
 	var once sync.Once
 	stop := func() {
 		once.Do(func() {

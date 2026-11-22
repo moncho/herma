@@ -19,7 +19,7 @@ const indexLimit = 4000
 func (h *Handler) contextIndex(w http.ResponseWriter, r *http.Request, projectID string) {
 	snapshot, err := h.projectSnapshot(r.Context(), projectID, true)
 	if err != nil {
-		storeError(w, err)
+		h.storeError(w, r, err)
 		return
 	}
 	data := []byte(renderIndex(snapshot))

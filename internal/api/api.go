@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"net/url"
@@ -51,12 +52,14 @@ type Handler struct {
 	// stop is closed to end requests waiting for changes (see StopWaiting).
 	stop     chan struct{}
 	stopOnce sync.Once
+	// errors receives the causes of internal errors (see SetErrorLog).
+	errors *log.Logger
 }
 
 // NewHandler copies the configured identities. An invalid set fails closed:
 // every bearer token is refused until SetIdentities receives a valid set.
 func NewHandler(s *store.Store, identities []Identity) *Handler {
-	h := &Handler{store: s, stop: make(chan struct{})}
+	h := &Handler{store: s, stop: make(chan struct{}), errors: log.New(io.Discard, "", 0)}
 	if err := h.SetIdentities(identities); err != nil {
 		h.identities.Store(&[]identity{})
 	}
@@ -143,6 +146,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	author := store.Author{Name: id.actor, Role: id.role}
+	r = r.WithContext(context.WithValue(r.Context(), requestInfoKey{}, requestInfo{r.Method, r.URL.Path, id.actor}))
 	// MCP carries reads over POST; the store refuses its writes from a
 	// read-only identity.
 	if r.URL.Path == "/mcp" {
@@ -165,7 +169,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if method(w, r, http.MethodGet) {
 			kinds, err := h.store.Kinds(r.Context())
 			if err != nil {
-				storeError(w, err)
+				h.storeError(w, r, err)
 				return
 			}
 			writeJSON(w, http.StatusOK, schemaDocument(kinds))
@@ -202,7 +206,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			record, replay, err := h.store.Create(r.Context(), author, r.Header.Get("Idempotency-Key"), input)
 			h.mu.Unlock()
 			if err != nil {
-				storeError(w, err)
+				h.storeError(w, r, err)
 				return
 			}
 			status := http.StatusCreated
@@ -252,7 +256,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 				revisions, err := h.store.History(r.Context(), parts[2])
 				if err != nil {
-					storeError(w, err)
+					h.storeError(w, r, err)
 					return
 				}
 				writeJSON(w, http.StatusOK, map[string]any{"items": revisions})
@@ -272,7 +276,7 @@ func (h *Handler) record(w http.ResponseWriter, r *http.Request, id string, auth
 	case http.MethodGet:
 		record, err := h.store.Get(r.Context(), id)
 		if err != nil {
-			storeError(w, err)
+			h.storeError(w, r, err)
 			return
 		}
 		h.countFetched(r.Context(), author, id)
@@ -286,7 +290,7 @@ func (h *Handler) record(w http.ResponseWriter, r *http.Request, id string, auth
 		record, replay, err := h.store.Update(r.Context(), id, author, r.Header.Get("Idempotency-Key"), input)
 		h.mu.Unlock()
 		if err != nil {
-			storeError(w, err)
+			h.storeError(w, r, err)
 			return
 		}
 		if replay {
@@ -331,7 +335,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.store.List(r.Context(), options)
 	if err != nil {
-		storeError(w, err)
+		h.storeError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -351,7 +355,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, context.DeadlineExceeded) {
 			writeError(w, http.StatusServiceUnavailable, "export_timeout", "export took too long to prepare; use a stopped-service database backup for large histories")
 		} else {
-			storeError(w, err)
+			h.storeError(w, r, err)
 		}
 		return
 	}
@@ -359,7 +363,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	// interrupted network transfer detectable by HTTP clients.
 	data, err := json.Marshal(snapshot)
 	if err != nil {
-		storeError(w, err)
+		h.storeError(w, r, err)
 		return
 	}
 	if len(data)+1 > maxExportBytes {
@@ -552,7 +556,11 @@ func queryInt(q url.Values, key string, fallback int) (int, error) {
 func badRequest(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 }
-func storeError(w http.ResponseWriter, err error) {
+
+// storeError answers a failed request. An error the caller can act on is
+// described to them; any other is logged with its cause and answered with a
+// generic message, so internal details never reach the caller.
+func (h *Handler) storeError(w http.ResponseWriter, r *http.Request, err error) {
 	var invalid *store.ValidationError
 	var duplicate *store.DuplicateError
 	switch {
@@ -571,6 +579,7 @@ func storeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrForbidden):
 		writeError(w, http.StatusForbidden, "forbidden", err.Error())
 	default:
+		h.logFailure(r.Context(), "internal error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "the request could not be completed")
 	}
 }

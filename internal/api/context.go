@@ -91,7 +91,7 @@ func (h *Handler) projectContext(w http.ResponseWriter, r *http.Request) {
 	}
 	snapshot, err := h.projectSnapshot(r.Context(), q.Get("project_id"), includeDurable)
 	if err != nil {
-		storeError(w, err)
+		h.storeError(w, r, err)
 		return
 	}
 	if principles == "omit" {
@@ -99,7 +99,7 @@ func (h *Handler) projectContext(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := packContext(snapshot, contextOptions{budget: budget, includeDurable: includeDurable, format: format})
 	if err != nil {
-		storeError(w, err)
+		h.storeError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", format.contentType())

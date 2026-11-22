@@ -102,7 +102,7 @@ when the file changes; an invalid file keeps the previous identities.
 - Usage counts are two totals and a last-used time per record, written when an
   agent's recall response includes the record or an agent reads it by ID. They
   do not say which identity or query used it, and a count that fails to write
-  is dropped rather than failing the read.
+  is logged rather than failing the read.
 - No hard deletion or retention policy; history and retry receipts accumulate.
   Receipts reference the revision they returned rather than copying the record.
 - Durability comes from `VACUUM INTO` snapshots that `herma serve` writes into a

@@ -15,7 +15,7 @@ func counted(author store.Author) bool { return author.Role != store.RoleReviewe
 
 // countRecalled notes the records a recall response gave to an agent. The
 // count is a statistic: failing to write it must not fail the read it
-// describes, so the error is dropped.
+// describes, so the error is logged and the read goes on.
 func (h *Handler) countRecalled(ctx context.Context, author store.Author, records []store.Recalled) {
 	if !counted(author) || len(records) == 0 {
 		return
@@ -24,13 +24,18 @@ func (h *Handler) countRecalled(ctx context.Context, author store.Author, record
 	for i, r := range records {
 		ids[i] = r.ID
 	}
-	_ = h.store.CountRecalled(ctx, ids)
+	if err := h.store.CountRecalled(ctx, ids); err != nil {
+		h.logFailure(ctx, "usage count not recorded", err)
+	}
 }
 
 // countFetched notes a read of one record by ID, under the same rules.
 func (h *Handler) countFetched(ctx context.Context, author store.Author, id string) {
-	if counted(author) {
-		_ = h.store.CountFetched(ctx, id)
+	if !counted(author) {
+		return
+	}
+	if err := h.store.CountFetched(ctx, id); err != nil {
+		h.logFailure(ctx, "usage count not recorded", err)
 	}
 }
 
@@ -47,7 +52,7 @@ func (h *Handler) usage(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.store.Usage(r.Context(), store.UsageOptions{ProjectID: q.Get("project_id"), Limit: limit})
 	if err != nil {
-		storeError(w, err)
+		h.storeError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)

@@ -56,7 +56,7 @@ func (h *Handler) changes(w http.ResponseWriter, r *http.Request) {
 		written := h.store.Changed()
 		result, err := h.store.Changes(r.Context(), options)
 		if err != nil {
-			storeError(w, err)
+			h.storeError(w, r, err)
 			return
 		}
 		if len(result.Items) > 0 {

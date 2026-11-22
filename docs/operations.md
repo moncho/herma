@@ -103,6 +103,26 @@ outside that lock, so a stalled client does not freeze other sessions. Run one
 service process per database. Do not share the SQLite file over a network
 filesystem or open competing service processes against it.
 
+## Internal errors
+
+When a request fails inside the server, the caller gets only
+`internal_error` ("the request could not be completed"), or MCP's
+`internal error`. The cause is written to the server's stderr, one line each:
+
+```text
+2026/11/22 21:04:11 internal error: GET /v1/usage (claude-laptop): SQL logic error: no such table: usage (1)
+2026/11/22 21:04:12 internal error: POST /mcp (claude-laptop): tool update: database is locked
+2026/11/22 21:04:13 usage count not recorded: GET /v1/recall (claude-laptop): database is locked
+```
+
+Each line has the UTC time, the method and path, the identity that asked and
+the cause, which is the error's own text. The query string, the request body
+and the token are not part of the line. The last form is a usage count that could not be saved; the read it belongs to was
+still answered. Requests the caller got wrong (invalid input, a missing
+record, a version conflict, a refused role) and requests the caller abandoned
+are not logged. `herma serve` in a terminal prints these lines there;
+`make service-start` sends them to `server.log` in the data folder.
+
 ## Export, backups and restore
 
 ```sh

@@ -50,7 +50,7 @@ func (h *Handler) principles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusGone, projectUnavailableCode, "project is archived")
 		return
 	case err != nil:
-		storeError(w, err)
+		h.storeError(w, r, err)
 		return
 	}
 	data := renderPrinciples(projectID, records, total)
