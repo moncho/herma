@@ -12,6 +12,17 @@
 | `principle` | Durable conventions; reviewed before they count | `proposed`, `accepted`, `rejected`, `superseded` |
 | `kind` | A record kind definition: typed fields, statuses and policy | `proposed`, `accepted`, `retired`, `rejected` |
 
+The kinds fall into four groups. Behaviour and memory are durable and count
+only once the reviewer accepts them; work is temporary and agents write it
+freely; structure organises the rest.
+
+| Group | Kinds | What it holds | Reviewed | How it reaches a session |
+| --- | --- | --- | --- | --- |
+| Behaviour | `principle` | How agents should act | Yes | Loaded into every session as standing instructions |
+| Memory | `knowledge` | Facts and past decisions | Yes | Found with `herma recall`; titles are listed in a bound checkout's session index |
+| Work | `task`, `note`, `feedback` | What is happening now: the state of an effort, a handoff, an open problem | No | Open tasks are listed in the session index; all three appear in `herma context` |
+| Structure | `project`, `kind` | Where records belong and which record shapes exist | `kind` only | Not delivered as content |
+
 Records have stable IDs, text bodies, optional project membership, priority
 from 0 to 5 (5 is highest), tags, links to other records, and source references.
 Self-links are rejected. Links to archived records remain valid because those
