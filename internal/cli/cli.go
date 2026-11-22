@@ -51,6 +51,7 @@ Session memory
   recall "words" [--project ID]                    Search accepted knowledge and principles
   principles [--project ID]                        Accepted principles as markdown
   usage [--project ID] [--format text|json]        How often agents recalled or fetched accepted records
+  watch [--kind KIND] [--project ID] [--after N]   Print record changes as they happen, one JSON line each
   status                                           Binding, identity, versions, queue and backup age
 
 Review (reviewer identity, local socket only)
@@ -236,6 +237,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return principlesCommand(ctx, cfg, rest, stdout, stderr)
 	case "usage":
 		return usageCommand(ctx, cfg, rest, stdout, stderr)
+	case "watch":
+		return watchCommand(ctx, cfg, rest, stdout, stderr)
 	case "schema", "export":
 		if err := noOptions(command, rest, stderr); err != nil {
 			return err

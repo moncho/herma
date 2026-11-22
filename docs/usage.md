@@ -529,6 +529,51 @@ Without `--project`, usage lists the bound project's records and global ones, or
 every project when the checkout has no binding. `--limit` (default 100, at most
 200) caps the list and `--format json` prints the API response.
 
+## Watching changes
+
+`herma watch` prints every record change as it is committed, one JSON object
+per line, until you interrupt it:
+
+```sh
+herma watch --kind task
+```
+
+```json
+{"seq":3,"action":"created","actor":"local-agent","at":"2026-11-22T21:42:34Z","record":{"id":"rec_23000c2a9baf54f6911bef667ed211a6","kind":"task","title":"Draft the release notes","status":"open","archived":false,"version":1}}
+{"seq":4,"action":"updated","actor":"local-agent","at":"2026-11-22T21:42:35Z","record":{"id":"rec_23000c2a9baf54f6911bef667ed211a6","kind":"task","title":"Draft the release notes","status":"done","archived":false,"version":2}}
+```
+
+herma only reports. It runs nothing when a record changes; whatever reads the
+lines decides what to do, for example start an agent on each new task:
+
+```sh
+herma watch --kind task | while read -r change; do
+  [ "$(printf '%s' "$change" | jq -r .action)" = created ] || continue
+  my-agent "$(printf '%s' "$change" | jq -r .record.id)"
+done
+```
+
+Each line shows the record as that write left it, without its body; read the
+rest with `herma get`. `seq` numbers writes in commit order across all records.
+Without `--after`, watch starts from now; `--after N` continues after change N,
+so a reader that remembers the last `seq` it handled misses nothing across
+restarts, and `--after 0` replays the whole history. `--kind` keeps one kind.
+Without `--project`, watch follows the bound project's records, or every
+project when the checkout has no binding. Unlike recall, a project's feed
+leaves out global records, so a global record is not reported once per project.
+
+Watch keeps going while the server is unreachable or failing, retrying after
+1 second and then up to every 30, and says so on stderr. It exits with an
+error when the server refuses the request, since asking again would not help.
+
+Underneath is `GET /v1/changes?after=N`, which returns the changes after a
+cursor and `next`, the cursor to continue from. `wait=S` (up to 25 seconds)
+holds the request until a matching write commits, which is how watch learns of
+a change at once without the server calling anyone. Every role may read it.
+After a restore from an older backup the numbers start again from that
+backup's last change: a cursor ahead of it is moved back to it, and a reader
+may see numbers it has seen before.
+
 ## Search and lists
 
 Search uses SQLite FTS5 over title, body, search terms and the textual fields of

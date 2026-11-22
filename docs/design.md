@@ -94,6 +94,11 @@ when the file changes; an invalid file keeps the previous identities.
   other sessions.
 - No automatic ingestion, orchestration, issue-tracker synchronization, job
   scheduling or web interface. Agents record coordination changes explicitly.
+  The change feed reports writes to whoever asks and runs nothing: a reader
+  pulls changes after a cursor, optionally waiting up to 25 seconds, so the
+  server never calls out, keeps no subscriptions and holds no reader state.
+  Waiting readers are woken in-process, which assumes the one service process
+  that owns the file.
 - Usage counts are two totals and a last-used time per record, written when an
   agent's recall response includes the record or an agent reads it by ID. They
   do not say which identity or query used it, and a count that fails to write

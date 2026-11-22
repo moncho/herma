@@ -21,7 +21,8 @@ agents propose new ones as they learn how you work.
 - **Work that outlasts a session.** Agents keep the state of long-running work
   in herma tasks and use herma to coordinate and hand work over. A bound
   repository's sessions start with an index: the titles of open tasks and
-  accepted knowledge, which agents open when relevant.
+  accepted knowledge, which agents open when relevant. `herma watch` prints
+  each record change as it happens, for a script that reacts to new work.
 - **Any agent over MCP.** The server speaks the Model Context Protocol at
   `/mcp`, with tools to recall, read principles, propose, and coordinate
   through tasks and notes, so agents without herma's hooks (and hosted agents)

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -22,7 +23,12 @@ import (
 
 // Store keeps record changes, revision history, and replay receipts atomic.
 // A single connection serializes writes and also makes :memory: useful in tests.
-type Store struct{ db *sql.DB }
+type Store struct {
+	db *sql.DB
+	// changed is closed and replaced after each committed record write.
+	mu      sync.Mutex
+	changed chan struct{}
+}
 
 // schemaVersion is the PRAGMA user_version written by the newest migration.
 var schemaVersion = len(migrations)
@@ -113,6 +119,18 @@ ALTER TABLE record_search_terms RENAME TO record_search;`,
  fetched INTEGER NOT NULL DEFAULT 0,
  last_used_ns INTEGER NOT NULL
 );`,
+	// 8: number every record write in commit order, so a reader can ask for
+	// what changed after a point. The number is a key of its own because
+	// implicit rowids may change during VACUUM, which backups use. Existing
+	// history is numbered oldest write first.
+	`CREATE TABLE changes (
+ seq INTEGER PRIMARY KEY,
+ record_id TEXT NOT NULL,
+ version INTEGER NOT NULL,
+ FOREIGN KEY(record_id, version) REFERENCES revisions(record_id, version)
+);
+INSERT INTO changes(record_id, version)
+ SELECT record_id, version FROM revisions ORDER BY json_extract(data, '$.at'), record_id, version;`,
 }
 
 // Open opens a local SQLite database. The parent directory must already exist.
@@ -140,7 +158,7 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("initialize database: %w", err)
 	}
-	return &Store{db: db}, nil
+	return &Store{db: db, changed: make(chan struct{})}, nil
 }
 
 func migrate(db *sql.DB) error {
@@ -234,6 +252,7 @@ func (s *Store) Create(ctx context.Context, author Author, key string, input Cre
 	if err := tx.Commit(); err != nil {
 		return Record{}, false, err
 	}
+	s.signalChange()
 	return r, false, nil
 }
 
@@ -361,6 +380,7 @@ func (s *Store) Update(ctx context.Context, id string, author Author, key string
 	if err := tx.Commit(); err != nil {
 		return Record{}, false, err
 	}
+	s.signalChange()
 	return r, false, nil
 }
 
@@ -580,6 +600,9 @@ owner=excluded.owner, archived=excluded.archived, updated_ns=excluded.updated_ns
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO revisions(record_id, version, data) VALUES (?, ?, ?)", r.ID, r.Version, string(revision)); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO changes(record_id, version) VALUES (?, ?)", r.ID, r.Version); err != nil {
 		return err
 	}
 	if key != "" {

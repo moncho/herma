@@ -48,12 +48,15 @@ type Handler struct {
 	// Aggregated context and exports must not mix revisions from concurrent API
 	// writes. One service process owns the database for this first version.
 	mu sync.RWMutex
+	// stop is closed to end requests waiting for changes (see StopWaiting).
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 // NewHandler copies the configured identities. An invalid set fails closed:
 // every bearer token is refused until SetIdentities receives a valid set.
 func NewHandler(s *store.Store, identities []Identity) *Handler {
-	h := &Handler{store: s}
+	h := &Handler{store: s, stop: make(chan struct{})}
 	if err := h.SetIdentities(identities); err != nil {
 		h.identities.Store(&[]identity{})
 	}
@@ -223,6 +226,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/v1/recall":
 		if method(w, r, http.MethodGet) {
 			h.recall(w, r, author)
+		}
+	case "/v1/changes":
+		if method(w, r, http.MethodGet) {
+			h.changes(w, r)
 		}
 	case "/v1/usage":
 		if method(w, r, http.MethodGet) {

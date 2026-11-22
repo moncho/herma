@@ -207,6 +207,8 @@ func serve(ctx context.Context, cfg config, args []string, stderr io.Writer) err
 		close(backupsDone)
 	}
 	shutdown := func() error {
+		// Requests waiting for changes would otherwise outlast the shutdown budget.
+		handler.StopWaiting()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		var result error

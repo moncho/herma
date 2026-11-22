@@ -83,6 +83,7 @@ INSERT INTO old_search(rowid, title, body, fields) SELECT rowid, title, body, fi
 DROP TABLE record_search;
 ALTER TABLE old_search RENAME TO record_search;
 DROP TABLE usage;
+DROP TABLE changes;
 PRAGMA user_version = 5;`); err != nil {
 		t.Fatal(err)
 	}
