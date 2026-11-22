@@ -205,8 +205,13 @@ silent unless global principles changed. See
 
 The hook discovers the nearest `.herma-project.json` using the session's actual
 working directory. Nested folders work; lookup stops at a Git repository or
-worktree boundary. Track the binding in each worktree where it is needed; the
-hook itself is already installed. An invalid nearby binding produces a warning
+worktree boundary. A linked worktree without a binding of its own uses its main
+checkout's, so a binding kept out of source control still reaches every
+worktree; this holds only for worktrees the repository itself lists (those made
+with `git worktree add`), never for a folder that merely points at it, and not
+for worktrees of a bare repository. A binding committed in the worktree wins.
+The project's rules file is written into the worktree, where the session reads
+it. An invalid binding, nearby or in the main checkout, produces a warning
 instead of silently falling back. To change a binding, edit its project ID/budget
 explicitly; `project bind` will not overwrite a different existing configuration.
 

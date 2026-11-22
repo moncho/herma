@@ -64,10 +64,11 @@ session. Changed hook definitions require review again. See the
 [official Codex hook trust documentation](https://learn.chatgpt.com/docs/hooks#review-and-trust-hooks).
 
 Commit `.herma-project.json` to share its project ID and context budget. It contains
-no endpoint or credentials. Each worktree needs that binding in its checkout;
-the hook is already installed. Discovery uses the session's actual working
-directory, including nested folders, and stops at the Git repository/worktree
-boundary. An invalid nearer binding produces a warning instead of selecting a
+no endpoint or credentials. A linked worktree uses its own binding when it has
+one and otherwise its main checkout's, so an uncommitted binding still covers
+worktrees; the hook is already installed. Discovery uses the session's actual
+working directory, including nested folders, and otherwise stops at the Git
+repository/worktree boundary. An invalid binding produces a warning instead of selecting a
 different project. `project bind` preserves an existing binding; edit the file
 explicitly when intentionally changing its project or budget.
 

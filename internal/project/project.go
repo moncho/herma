@@ -19,6 +19,7 @@ const (
 	MinMaxBytes     = 2048
 	MaxMaxBytes     = 65536
 	maxFileBytes    = 64 << 10
+	maxPointerBytes = 4096
 )
 
 var (
@@ -34,28 +35,37 @@ type Binding struct {
 	MaxBytes  int    `json:"max_bytes"`
 }
 
-// Discover finds the nearest binding from the physical session directory.
-// The binding at a Git checkout root is considered before its .git file or
-// directory stops traversal. Linked worktrees therefore find their own tracked
-// binding without following gitdir pointers into a different checkout.
-// An invalid or unreadable nearer binding always stops discovery with an error.
+// Discover finds the nearest binding from the physical session directory and
+// returns it with the directory it applies to. The binding at a Git checkout
+// root is considered before its .git file or directory stops traversal. A
+// linked worktree without a binding of its own inherits its main checkout's
+// (see mainCheckout) and is the directory returned; no other .git entry is
+// followed. An invalid or unreadable binding, nearer or inherited, always
+// stops discovery with an error.
 func Discover(cwd string) (Binding, string, error) {
 	dir, err := resolveDirectory(cwd)
 	if err != nil {
 		return Binding{}, "", err
 	}
 	for {
-		path := filepath.Join(dir, FileName)
-		binding, err := readBinding(path)
+		binding, err := readBinding(filepath.Join(dir, FileName))
 		if err == nil {
-			return binding, path, nil
+			return binding, dir, nil
 		}
 		if !errors.Is(err, errBindingAbsent) {
 			return Binding{}, "", err
 		}
-		// Any existing .git entry is a boundary. Do not follow symlinks or read
-		// worktree metadata; either could lead outside the session's checkout.
+		// Any existing .git entry is a boundary.
 		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			if main, ok := mainCheckout(dir); ok {
+				binding, err := readBinding(filepath.Join(main, FileName))
+				if err == nil {
+					return binding, dir, nil
+				}
+				if !errors.Is(err, errBindingAbsent) {
+					return Binding{}, "", err
+				}
+			}
 			return Binding{}, "", fmt.Errorf("%w at or below Git boundary %s", ErrNoBinding, dir)
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return Binding{}, "", fmt.Errorf("inspect Git boundary in %s: %w", dir, err)
@@ -66,6 +76,67 @@ func Discover(cwd string) (Binding, string, error) {
 		}
 		dir = parent
 	}
+}
+
+// mainCheckout returns the main checkout of the repository that dir is a
+// linked worktree of. A .git file is only a claim, which any folder can make,
+// so the repository must confirm it the way git does: the admin directory the
+// file names has to sit in the repository's own .git/worktrees and name that
+// same .git file back. Only the repository's owner can write there, so a
+// folder cannot adopt the binding of a repository that did not create it.
+func mainCheckout(dir string) (string, bool) {
+	pointer := filepath.Join(dir, ".git")
+	target, ok := readPointer(pointer, "gitdir: ")
+	if !ok {
+		return "", false
+	}
+	// The physical path, so the repository is derived from where the admin
+	// directory really is and not from a symlink that names it.
+	admin, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return "", false
+	}
+	worktrees := filepath.Dir(admin)
+	gitDir := filepath.Dir(worktrees)
+	if filepath.Base(worktrees) != "worktrees" || filepath.Base(gitDir) != ".git" {
+		return "", false
+	}
+	back, ok := readPointer(filepath.Join(admin, "gitdir"), "")
+	if !ok {
+		return "", false
+	}
+	claimed, err := os.Lstat(pointer)
+	if err != nil {
+		return "", false
+	}
+	named, err := os.Lstat(back)
+	if err != nil || !os.SameFile(claimed, named) {
+		return "", false
+	}
+	return filepath.Dir(gitDir), true
+}
+
+// readPointer reads a one-line git file that holds a path after prefix, such
+// as a worktree's .git file, and resolves a relative path against the file's
+// directory. It refuses anything but a small regular file, so a planted pipe
+// or huge file can neither block nor exhaust the session hook.
+func readPointer(path, prefix string) (string, bool) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxPointerBytes {
+		return "", false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	target, ok := strings.CutPrefix(strings.TrimRight(string(data), "\r\n"), prefix)
+	if !ok {
+		return "", false
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(path), target)
+	}
+	return filepath.Clean(target), true
 }
 
 // Bind atomically writes a binding in dir. MaxBytes == 0 selects the default.

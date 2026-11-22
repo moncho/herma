@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -96,6 +97,48 @@ func TestClaudeHookWritesPrinciplesAndAnnouncesOnlyChanges(t *testing.T) {
 	reviewed(t, db, store.CreateInput{Kind: "principle", Title: "Open PRs as drafts", ProjectID: p.ID})
 	if third := runSessionHook(t, root, "--client", "claude"); !strings.Contains(third.Context, "Open PRs as drafts") || !strings.Contains(third.Context, "## Project principles changed") {
 		t.Fatalf("new principle not announced:\n%s", third.Context)
+	}
+}
+
+// A session in a linked worktree is bound through the main checkout, and its
+// rules file goes where the session runs, since that is where Claude reads it.
+func TestClaudeHookBindsALinkedWorktreeThroughItsMainCheckout(t *testing.T) {
+	db, p, root := claudeHookFixture(t, 0, nil)
+	reviewed(t, db, store.CreateInput{Kind: "principle", Title: "Never commit to main", ProjectID: p.ID})
+	main, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worktree, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := filepath.Join(main, ".git", "worktrees", "feature")
+	if err := os.MkdirAll(admin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for path, content := range map[string]string{
+		filepath.Join(worktree, ".git"): "gitdir: " + admin + "\n",
+		filepath.Join(admin, "gitdir"):  filepath.Join(worktree, ".git") + "\n",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	packet := runSessionHook(t, worktree, "--client", "claude")
+	if !strings.Contains(packet.Context, "Never commit to main") {
+		t.Fatalf("worktree session did not get the project's principles:\n%s", packet.Context)
+	}
+	file, err := os.ReadFile(filepath.Join(worktree, rules.Path))
+	if err != nil || !strings.Contains(string(file), "## Never commit to main") {
+		t.Fatalf("rules file in the worktree: %s %v", file, err)
+	}
+	if _, err := os.Stat(filepath.Join(main, rules.Path)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the worktree's session wrote a rules file into the main checkout: %v", err)
+	}
+	t.Chdir(worktree)
+	if status := runStatus(t); !status.Bound || status.ProjectID != p.ID {
+		t.Fatalf("status in the worktree: %+v, want bound to %s", status, p.ID)
 	}
 }
 

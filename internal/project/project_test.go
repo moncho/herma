@@ -49,7 +49,7 @@ func TestDiscoverNearestBindingFromPhysicalSessionDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	binding, path, err := Discover(nested)
-	if err != nil || path != rootPath || binding != (Binding{ProjectID: projectA, MaxBytes: DefaultMaxBytes}) {
+	if err != nil || path != filepath.Dir(rootPath) || binding != (Binding{ProjectID: projectA, MaxBytes: DefaultMaxBytes}) {
 		t.Fatalf("nested root discovery: %+v %q %v", binding, path, err)
 	}
 	childPath, err := Bind(child, Binding{ProjectID: projectB, MaxBytes: 4096})
@@ -57,7 +57,7 @@ func TestDiscoverNearestBindingFromPhysicalSessionDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	binding, path, err = Discover(nested)
-	if err != nil || path != childPath || binding.ProjectID != projectB || binding.MaxBytes != 4096 {
+	if err != nil || path != filepath.Dir(childPath) || binding.ProjectID != projectB || binding.MaxBytes != 4096 {
 		t.Fatalf("nearest binding: %+v %q %v", binding, path, err)
 	}
 	alias := filepath.Join(t.TempDir(), "session-directory")
@@ -65,7 +65,7 @@ func TestDiscoverNearestBindingFromPhysicalSessionDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	binding, path, err = Discover(alias)
-	if err != nil || path != childPath || binding.ProjectID != projectB {
+	if err != nil || path != filepath.Dir(childPath) || binding.ProjectID != projectB {
 		t.Fatalf("physical session directory: %+v %q %v", binding, path, err)
 	}
 }
@@ -99,7 +99,7 @@ func TestDiscoverStopsAtRepositoryAndWorktreeBoundaries(t *testing.T) {
 				t.Fatal(err)
 			}
 			binding, path, err = Discover(nested)
-			if err != nil || path != config || binding.ProjectID != projectB {
+			if err != nil || path != filepath.Dir(config) || binding.ProjectID != projectB {
 				t.Fatalf("checkout-root binding not discovered: %+v %q %v", binding, path, err)
 			}
 		})
@@ -184,7 +184,7 @@ func TestDefaultsBoundsAndBindingIdempotency(t *testing.T) {
 				t.Fatal(err)
 			}
 			binding, path, err := Discover(root)
-			if err != nil || path != config || binding.MaxBytes != want {
+			if err != nil || path != filepath.Dir(config) || binding.MaxBytes != want {
 				t.Fatalf("valid budget: %+v %q %v", binding, path, err)
 			}
 			bound, err := Bind(root, Binding{ProjectID: projectA, MaxBytes: budget})

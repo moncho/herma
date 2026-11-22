@@ -240,7 +240,7 @@ func sessionStart(ctx context.Context, cfg config, requireToken bool, client str
 	}
 	ctx, cancel := context.WithTimeout(ctx, hookTimeout)
 	defer cancel()
-	binding, bindingPath, err := project.Discover(event.Cwd)
+	binding, checkout, err := project.Discover(event.Cwd)
 	bound := err == nil
 	if err != nil && !errors.Is(err, project.ErrNoBinding) {
 		return hookWarning(stdout, "herma context unavailable: check this repository's .herma-project.json binding.")
@@ -278,7 +278,6 @@ func sessionStart(ctx context.Context, cfg config, requireToken bool, client str
 			"hookEventName": "SessionStart", "additionalContext": strings.TrimSpace(global),
 		}})
 	}
-	checkout := filepath.Dir(bindingPath)
 	projectSection, projectTooLong, warnings, err := projectPrinciples(ctx, cfg, client, binding, checkout)
 	if err != nil {
 		return hookWarning(stdout, "herma context unavailable: check the service (restart herma serve after upgrading herma) and credentials with herma context from this repository. Session startup will continue.")
@@ -345,19 +344,18 @@ func refreshPrinciples(ctx context.Context, cfg config, seen string, stdout io.W
 	_, _ = rules.SyncGlobal(home, global)
 	var projectData []byte
 	var projectPath string
-	binding, bindingPath, err := project.Discover(cwd)
+	binding, checkout, err := project.Discover(cwd)
 	switch {
 	case errors.Is(err, project.ErrNoBinding):
 	case err != nil:
 		return err
-	case isHomeDir(filepath.Dir(bindingPath)):
+	case isHomeDir(checkout):
 		// Session start puts these in the context, not in a rules file; they
 		// are not followed here.
 	default:
 		if projectData, err = cfg.principlesFile(ctx, binding.ProjectID); err != nil {
 			return err
 		}
-		checkout := filepath.Dir(bindingPath)
 		projectPath = filepath.Join(checkout, rules.Path)
 		_, _ = rules.Sync(checkout, projectData)
 	}
