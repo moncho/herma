@@ -555,14 +555,20 @@ herma watch --kind task
 ```
 
 herma only reports. It runs nothing when a record changes; whatever reads the
-lines decides what to do, for example start an agent on each new task:
+lines decides what to do, for example tell you when a task becomes blocked:
 
 ```sh
 herma watch --kind task | while read -r change; do
-  [ "$(printf '%s' "$change" | jq -r .action)" = created ] || continue
-  my-agent "$(printf '%s' "$change" | jq -r .record.id)"
+  [ "$(printf '%s' "$change" | jq -r .record.status)" = blocked ] || continue
+  my-notifier "herma: blocked: $(printf '%s' "$change" | jq -r .record.title)"
 done
 ```
+
+Keep readers to telling a person. Tasks, notes and feedback are written by
+any agent identity and nobody reviews them, so a reader that started an agent
+from one would let whoever holds an agent token direct work on your machine.
+Act on a record's text only when the reviewer accepted that record; see the
+[design notes](design.md).
 
 Each line shows the record as that write left it, without its body; read the
 rest with `herma get`. `seq` numbers writes in commit order across all records.

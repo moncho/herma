@@ -35,6 +35,14 @@ Only reviewed principles are meant to shape behavior, and agents copy what they
 see in context, so unreviewed records are never delivered as standing
 instructions.
 
+The same line holds for whatever reads the change feed. A reader may tell a
+person about a change to a record of any kind. It may act on a record's text,
+for example by starting an agent with it, only when the reviewer accepted that
+record. Tasks, notes and feedback are written by any agent identity and never
+reviewed, so a reader that ran them would let whoever holds an agent token
+direct work on the reader's machine. herma cannot enforce this, because
+readers run outside it; it is the rule to build them by.
+
 Principles travel in instruction files (Claude user and project rules, a managed
 block in Codex's AGENTS.md) rather than in hook context. Hook context is capped
 (Claude: 10,000 characters) and cannot guarantee the full set arrives.
