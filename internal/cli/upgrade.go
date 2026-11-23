@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/moncho/herma/internal/hooks"
@@ -103,11 +104,42 @@ func upgrade(ctx context.Context, cfg config, args []string, stdout, stderr io.W
 	// The plugin is built into the binary, so the new one has to write it.
 	refresh := exec.CommandContext(ctx, target, "upgrade", "--plugin")
 	refresh.Env = append(os.Environ(), "HERMA_DIR="+cfg.dir)
+	// Under sudo the data folder is still the user's. Writing the plugin as
+	// root would leave files there the user cannot read, and has root write
+	// into a folder someone else controls.
+	if uid, gid, ok := folderOwner(cfg.dir); ok {
+		if writer := pluginWriter(os.Geteuid(), uid, gid); writer != nil {
+			refresh.SysProcAttr = &syscall.SysProcAttr{Credential: writer}
+		}
+	}
 	if out, err := refresh.CombinedOutput(); err != nil {
 		result["plugin_warning"] = "the Claude Code plugin was not refreshed (" + firstOutputLine(out, err) + "); rerun herma hook install --client claude"
 	}
 	result["message"] = "New sessions use " + tag + ". If this machine runs herma serve, restart it to serve the new version; herma status shows both."
 	return output(stdout, result)
+}
+
+// pluginWriter returns the identity to write the plugin as when it is not
+// this process's own: the data folder's owner, when root upgrades an install
+// that belongs to someone else. Only root can become another user.
+func pluginWriter(euid int, ownerUID, ownerGID uint32) *syscall.Credential {
+	if euid != 0 || ownerUID == 0 {
+		return nil
+	}
+	return &syscall.Credential{Uid: ownerUID, Gid: ownerGID}
+}
+
+// folderOwner returns the user and group that own dir.
+func folderOwner(dir string) (uid, gid uint32, ok bool) {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return 0, 0, false
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, 0, false
+	}
+	return stat.Uid, stat.Gid, true
 }
 
 // refreshPlugin rewrites the plugin in the data folder when one is installed

@@ -34,7 +34,9 @@ binary in one rename. A failure at any step leaves the installed binary as it
 was. It then rewrites the Claude Code plugin in the data folder when one is
 installed there. `--version v0.2.0` installs that release instead of the newest.
 It needs no Go toolchain, checkout, server or credentials, but it must be able
-to write the folder holding the binary. The checksum catches a damaged download;
+to write the folder holding the binary. When that folder needs it, run
+`sudo herma upgrade`: the plugin is then written as the owner of the data
+folder, not as root, so it stays readable to you. The checksum catches a damaged download;
 it comes from the same release as the archive, so it does not prove who built it.
 
 Run it on every machine: clients first, then the server. The hook and the
