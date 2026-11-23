@@ -164,13 +164,10 @@ plugin options already name a different server, identity, credentials file or
 binary, installation changes nothing and says so, unless both the server and the
 identity were chosen (`--url` and `--identity`, or `HERMA_URL` and
 `HERMA_IDENTITY`); then it replaces them. Each client's hook
-runs `herma hook session-start --client <client>`; rerun `herma hook install` after
-upgrading herma so existing hooks gain the flag. For this release, upgrade the
-clients before the server: on every client machine install the new binary and
-rerun `herma hook install`, then restart `herma serve` on the new binary. An old
-client talking to a new server gets only project principles and loses the global
-ones; a new client talking to an old server shows the coordination count line
-instead of the index. The hook loads only titles, within its own 4,000-byte index, so it ignores the binding's `max_bytes`;
+runs `herma hook session-start --client <client>`. A hook installed before
+v0.1.0 lacks that flag; it still runs and asks to be reinstalled, so rerun
+`herma hook install` once to replace it. [Upgrading](#upgrading) says in which
+order to upgrade the machines. The hook loads only titles, within its own 4,000-byte index, so it ignores the binding's `max_bytes`;
 that budget applies to `herma context`. Commands capture the
 executable, service URL and credential-file path, never a token. Keep these
 machine-specific hook files out of repositories; the generated `.herma-project.json`
